@@ -14,30 +14,35 @@ module Jikko
         end
 
         Dir.chdir(DIR) do
-          unless `git status --porcelain`.strip.empty?
+          # Exclude __init__.py (version file) from dirty check
+          dirty = `git status --porcelain`.strip.lines.reject { |l| l.include?("__init__.py") }.any?
+          commit = `git rev-parse --short HEAD`.strip
+          installed = `psn --version 2>/dev/null`.strip.sub("psn version ", "")
+          target = "#{BASE_VERSION}+#{commit}"
+
+          # Up to date: repo clean and version matches
+          if !dirty && installed == target
+            ok "PSN up to date [#{installed}]"
+            return
+          end
+
+          if dirty
             spin("Committing") do
               sh "git add -A && git commit -m 'Update #{Time.now.strftime("%Y-%m-%d %H:%M")}' && git push", capture: true
             end
+            commit = `git rev-parse --short HEAD`.strip
+            target = "#{BASE_VERSION}+#{commit}"
           end
 
-          # Update __init__.py with version
           spin("Versioning") do
             content = File.read(INIT_FILE)
-            updated = content.gsub(/__version__ = "[^"]+"/, "__version__ = \"#{full_version}\"")
+            updated = content.gsub(/__version__ = "[^"]+"/, "__version__ = \"#{target}\"")
             File.write(INIT_FILE, updated)
           end
 
           spin("Installing") { sh "pip3 install -e . --break-system-packages", capture: true }
-        end
-        ok "PSN reinstalled [#{full_version}]"
-      end
 
-      private
-
-      def full_version
-        @full_version ||= begin
-          commit_hash = `git -C #{DIR} rev-parse --short HEAD`.strip
-          "#{BASE_VERSION}+#{commit_hash}"
+          ok "PSN reinstalled [#{target}]"
         end
       end
     end
