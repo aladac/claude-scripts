@@ -2,5 +2,5 @@
 description: Update tengu.to
 ---
 ```bash
-claude-scripts sd update_tengu
+jikko sd update_tengu
 ```

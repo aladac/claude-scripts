@@ -2,7 +2,7 @@
 description: Create new slash command
 ---
 ```bash
-claude-scripts commands add $ARGUMENTS
+jikko commands add $ARGUMENTS
 ```
 
 After running the scaffold generator above, implement the command:
@@ -19,5 +19,5 @@ After running the scaffold generator above, implement the command:
    - `home(path)` - replace home dir with ~
 4. **Rebuild the gem** after implementation:
    ```bash
-   cd /opt/homebrew/lib/ruby/gems/4.0.0/gems/claude-scripts-0.1.0 && gem build claude-scripts.gemspec && gem install claude-scripts-*.gem
+   cd /opt/homebrew/lib/ruby/gems/4.0.0/gems/jikko-0.1.0 && gem build jikko.gemspec && gem install jikko-*.gem
    ```

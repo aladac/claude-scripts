@@ -2,5 +2,5 @@
 description: List saved plans
 ---
 ```bash
-claude-scripts plans ls
+jikko plans ls
 ```

@@ -2,5 +2,5 @@
 description: Show git diff
 ---
 ```bash
-claude-scripts git diff
+jikko git diff
 ```

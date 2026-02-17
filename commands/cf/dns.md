@@ -2,5 +2,5 @@
 description: Cloudflare DNS management
 ---
 ```bash
-claude-scripts cf dns $ARGUMENTS
+jikko cf dns $ARGUMENTS
 ```

@@ -2,5 +2,5 @@
 description: Update tensors
 ---
 ```bash
-claude-scripts sd update_tensors
+jikko sd update_tensors
 ```

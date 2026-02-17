@@ -2,5 +2,5 @@
 description: Convert safetensors to GGUF
 ---
 ```bash
-claude-scripts ai sd convert $ARGUMENTS
+jikko ai sd convert $ARGUMENTS
 ```

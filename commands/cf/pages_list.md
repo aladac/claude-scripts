@@ -2,5 +2,5 @@
 description: List Cloudflare Pages projects
 ---
 ```bash
-claude-scripts cf pages_list
+jikko cf pages_list
 ```

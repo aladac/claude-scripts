@@ -1,6 +1,6 @@
 ---
-description: Show claude-scripts gem status and commands
+description: Show jikko gem status and commands
 ---
 ```bash
-claude-scripts cl scripts $ARGUMENTS
+jikko cl scripts $ARGUMENTS
 ```

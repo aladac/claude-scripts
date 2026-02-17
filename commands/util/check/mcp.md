@@ -2,5 +2,5 @@
 description: Check MCP configuration
 ---
 ```bash
-claude-scripts util check mcp
+jikko util check mcp
 ```

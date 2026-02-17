@@ -2,5 +2,5 @@
 description: Delete Cloudflare Pages project
 ---
 ```bash
-claude-scripts cf pages_destroy $ARGUMENTS
+jikko cf pages_destroy $ARGUMENTS
 ```

@@ -2,5 +2,5 @@
 description: Check RatatuiRuby gem installation and status
 ---
 ```bash
-/Users/chi/Projects/claude-scripts/.claude/scripts/ratatui/check.rb $ARGUMENTS
+/Users/chi/Projects/jikko/.claude/scripts/ratatui/check.rb $ARGUMENTS
 ```

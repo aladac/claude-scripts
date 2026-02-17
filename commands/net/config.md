@@ -2,5 +2,5 @@
 description: Show network configuration
 ---
 ```bash
-claude-scripts net config
+jikko net config
 ```

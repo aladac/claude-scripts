@@ -2,5 +2,5 @@
 description: Reinstall PSN plugin
 ---
 ```bash
-claude-scripts psn reinstall
+jikko psn reinstall
 ```

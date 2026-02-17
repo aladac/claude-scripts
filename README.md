@@ -1,23 +1,35 @@
-# claude-scripts
+# jikko (実行)
 
-CLI utilities for Claude Code slash commands.
+CLI framework for Claude Code slash commands.
 
 ## Installation
 
 ```bash
-gem install claude-scripts --source https://github.com/aladac/claude-scripts
+gem build jikko.gemspec
+gem install jikko-*.gem
 ```
 
-Or from GitHub directly:
+## Setup
+
+Install commands to `~/.claude/commands`:
 
 ```bash
-gem 'claude-scripts', github: 'aladac/claude-scripts'
+jikko install
 ```
 
 ## Usage
 
+Every slash command has a matching CLI call:
+
 ```bash
-claude-scripts <command> [args]
+# /git:status
+jikko git status
+
+# /cf:dns zones
+jikko cf dns zones
+
+# /ai:sd:generate "a cat"
+jikko ai sd generate "a cat"
 ```
 
 ## Commands
@@ -35,19 +47,28 @@ claude-scripts <command> [args]
 | `util tools ls` | List whitelisted tool permissions |
 | `util tools add <perm>` | Add tool permission |
 | `util check claude_code` | Check Claude Code configuration |
-| `util check mcp` | Check MCP configuration |
 | `browse check` | Check browse plugin status |
 | `browse update` | Update browse plugin |
-| `browse reinstall` | Full reinstall of browse plugin |
 | `ai sd models` | List SD models on junkpile |
 | `ai sd generate <prompt>` | Generate image on junkpile |
 | `bump [type]` | Bump project version (patch/minor/major) |
+| `install` | Install commands to ~/.claude/commands |
+
+## Creating Commands
+
+```bash
+jikko commands add <namespace> <name> [description]
+```
+
+This creates:
+- `lib/jikko/<namespace>/<name>.rb` - Ruby implementation
+- `commands/<namespace>/<name>.md` - Slash command definition
 
 ## Development
 
 ```bash
 bundle install
-bundle exec claude-scripts help
+bundle exec jikko help
 ```
 
 ## License
