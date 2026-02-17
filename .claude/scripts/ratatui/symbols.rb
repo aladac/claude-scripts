@@ -103,6 +103,25 @@ class RatatuiSymbols < Claude::Generator
 
     puts
     hr
+    bold "Using symbols in Ratatui:"
+    puts <<~RUST
+      ```rust
+      use ratatui::symbols::{self, border, line};
+
+      // Built-in border sets
+      Block::bordered()
+          .border_type(BorderType::Rounded)  // ╭ ╮ ╰ ╯
+
+      // Built-in line sets
+      LineGauge::default()
+          .line_set(symbols::line::THICK)
+
+      // Custom characters
+      buf.get_mut(x, y).set_char('█');
+      buf.set_string(x, y, "▓▒░", style);
+      ```
+    RUST
+    puts
     info "Usage: /ratatui:symbols [category]"
     info "Categories: #{CATEGORIES.keys.join(', ')}"
   end

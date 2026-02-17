@@ -9,341 +9,484 @@ class RatatuiDebug < Claude::Generator
   TEMPLATES = {
     "logging" => {
       desc: "File-based debug logging",
-      code: <<~'RUBY'
-        # Debug logging that doesn't interfere with TUI
-        module Debug
-          LOG_FILE = File.join(Dir.tmpdir, "tui_debug.log")
-          @enabled = ENV["DEBUG"] == "1"
+      code: <<~'RUST'
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::sync::Mutex;
 
-          class << self
-            attr_accessor :enabled
+        // Global debug logger that doesn't interfere with TUI
+        lazy_static::lazy_static! {
+            static ref DEBUG_LOG: Mutex<Option<std::fs::File>> = Mutex::new(None);
+        }
 
-            def log(msg, level: :info)
-              return unless @enabled
-              timestamp = Time.now.strftime("%H:%M:%S.%L")
-              File.open(LOG_FILE, "a") do |f|
-                f.puts "[#{timestamp}] [#{level.upcase}] #{msg}"
-              end
-            end
+        pub fn init_debug_log() {
+            if std::env::var("DEBUG").is_ok() {
+                let file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/tui_debug.log")
+                    .ok();
+                *DEBUG_LOG.lock().unwrap() = file;
+            }
+        }
 
-            def info(msg)  = log(msg, level: :info)
-            def warn(msg)  = log(msg, level: :warn)
-            def error(msg) = log(msg, level: :error)
-            def debug(msg) = log(msg, level: :debug)
+        pub fn debug_log(level: &str, msg: &str) {
+            if let Some(file) = DEBUG_LOG.lock().unwrap().as_mut() {
+                let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
+                let _ = writeln!(file, "[{}] [{}] {}", timestamp, level, msg);
+            }
+        }
 
-            def inspect_object(label, obj)
-              log("#{label}: #{obj.inspect}")
-            end
+        #[macro_export]
+        macro_rules! debug_info {
+            ($($arg:tt)*) => {
+                debug_log("INFO", &format!($($arg)*));
+            };
+        }
 
-            def clear!
-              File.write(LOG_FILE, "") if File.exist?(LOG_FILE)
-            end
+        #[macro_export]
+        macro_rules! debug_error {
+            ($($arg:tt)*) => {
+                debug_log("ERROR", &format!($($arg)*));
+            };
+        }
 
-            def path
-              LOG_FILE
-            end
-          end
-        end
-
-        # Usage:
-        # DEBUG=1 ruby my_app.rb
-        # tail -f /tmp/tui_debug.log
-
-        Debug.info "Application started"
-        Debug.inspect_object "Event", event
-        Debug.error "Something went wrong: #{e.message}"
-      RUBY
+        // Usage:
+        // init_debug_log();  // Call once at startup
+        //
+        // DEBUG=1 cargo run
+        // tail -f /tmp/tui_debug.log
+        //
+        // debug_info!("Application started");
+        // debug_info!("Event: {:?}", event);
+        // debug_error!("Something went wrong: {}", e);
+      RUST
     },
     "fps" => {
       desc: "FPS counter and render timing",
-      code: <<~'RUBY'
-        class FPSCounter
-          def initialize(sample_size: 60)
-            @frame_times = []
-            @sample_size = sample_size
-            @last_frame = Time.now
-          end
+      code: <<~'RUST'
+        use std::collections::VecDeque;
+        use std::time::{Duration, Instant};
 
-          def tick
-            now = Time.now
-            @frame_times << (now - @last_frame)
-            @frame_times.shift if @frame_times.size > @sample_size
-            @last_frame = now
-          end
+        struct FPSCounter {
+            frame_times: VecDeque<Duration>,
+            last_frame: Instant,
+            sample_size: usize,
+        }
 
-          def fps
-            return 0 if @frame_times.empty?
-            avg_frame_time = @frame_times.sum / @frame_times.size
-            (1.0 / avg_frame_time).round(1)
-          end
+        impl FPSCounter {
+            fn new(sample_size: usize) -> Self {
+                Self {
+                    frame_times: VecDeque::with_capacity(sample_size),
+                    last_frame: Instant::now(),
+                    sample_size,
+                }
+            }
 
-          def frame_time_ms
-            return 0 if @frame_times.empty?
-            (@frame_times.last * 1000).round(2)
-          end
+            fn tick(&mut self) {
+                let now = Instant::now();
+                let frame_time = now - self.last_frame;
+                self.last_frame = now;
 
-          def avg_frame_time_ms
-            return 0 if @frame_times.empty?
-            (@frame_times.sum / @frame_times.size * 1000).round(2)
-          end
+                self.frame_times.push_back(frame_time);
+                if self.frame_times.len() > self.sample_size {
+                    self.frame_times.pop_front();
+                }
+            }
 
-          def render_stats(tui)
-            "FPS: #{fps} | Frame: #{frame_time_ms}ms | Avg: #{avg_frame_time_ms}ms"
-          end
-        end
+            fn fps(&self) -> f64 {
+                if self.frame_times.is_empty() {
+                    return 0.0;
+                }
+                let avg: Duration = self.frame_times.iter().sum::<Duration>() / self.frame_times.len() as u32;
+                1.0 / avg.as_secs_f64()
+            }
 
-        # Usage in app:
-        @fps = FPSCounter.new
+            fn frame_time_ms(&self) -> f64 {
+                self.frame_times.back().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
+            }
 
-        # In render loop:
-        @fps.tick
-        tui.draw do |frame|
-          # ... render app ...
+            fn avg_frame_time_ms(&self) -> f64 {
+                if self.frame_times.is_empty() {
+                    return 0.0;
+                }
+                let avg: Duration = self.frame_times.iter().sum::<Duration>() / self.frame_times.len() as u32;
+                avg.as_secs_f64() * 1000.0
+            }
 
-          # Show FPS in corner (debug mode only)
-          if @debug_mode
-            frame.render_widget(
-              tui.paragraph(text: @fps.render_stats(tui), style: tui.style(fg: :dark_gray)),
-              tui.rect(x: frame.area.width - 40, y: 0, width: 40, height: 1)
-            )
-          end
-        end
-      RUBY
+            fn stats(&self) -> String {
+                format!(
+                    "FPS: {:.1} | Frame: {:.2}ms | Avg: {:.2}ms",
+                    self.fps(),
+                    self.frame_time_ms(),
+                    self.avg_frame_time_ms()
+                )
+            }
+        }
+
+        // Usage in app:
+        // let mut fps = FPSCounter::new(60);
+        //
+        // // In render loop:
+        // fps.tick();
+        // terminal.draw(|frame| {
+        //     // ... render app ...
+        //
+        //     // Show FPS in corner (debug mode only)
+        //     if debug_mode {
+        //         let area = Rect::new(frame.area().width - 40, 0, 40, 1);
+        //         frame.render_widget(
+        //             Paragraph::new(fps.stats()).style(Style::new().dark_gray()),
+        //             area,
+        //         );
+        //     }
+        // })?;
+      RUST
     },
     "state_inspector" => {
       desc: "Widget to inspect application state",
-      code: <<~'RUBY'
-        class StateInspector
-          def initialize(app)
-            @app = app
-            @scroll = 0
-          end
+      code: <<~'RUST'
+        use ratatui::{
+            layout::Rect,
+            style::{Color, Style},
+            widgets::{Block, Paragraph},
+            Frame,
+        };
 
-          def handle_event(event)
-            case event
-            in { type: :key, code: "up" }
-              @scroll = [@scroll - 1, 0].max
-            in { type: :key, code: "down" }
-              @scroll += 1
-            else
-              nil
-            end
-          end
+        trait Inspectable {
+            fn inspect(&self) -> Vec<(String, String)>;
+        }
 
-          def state_lines
-            vars = @app.instance_variables.map do |var|
-              value = @app.instance_variable_get(var)
-              formatted = format_value(value)
-              "#{var}: #{formatted}"
-            end
-            vars.sort
-          end
+        struct StateInspector {
+            scroll: usize,
+        }
 
-          def format_value(val, max_len: 50)
-            str = case val
-                  when Array then "[#{val.size} items]"
-                  when Hash then "{#{val.size} keys}"
-                  when String then val.length > max_len ? "#{val[0..max_len]}..." : val.inspect
-                  else val.inspect
-                  end
-            str[0..max_len]
-          end
+        impl StateInspector {
+            fn new() -> Self {
+                Self { scroll: 0 }
+            }
 
-          def render(frame, tui, area)
-            lines = state_lines
-            visible = lines[@scroll, area.height - 2] || []
+            fn handle_key(&mut self, key: KeyEvent) {
+                match key.code {
+                    KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
+                    KeyCode::Down => self.scroll += 1,
+                    _ => {}
+                }
+            }
 
-            frame.render_widget(
-              tui.paragraph(
-                text: visible.join("\n"),
-                block: tui.block(
-                  title: "State Inspector (#{lines.size} vars)",
-                  borders: [:all],
-                  border_style: tui.style(fg: :yellow)
-                )
-              ),
-              area
-            )
-          end
-        end
+            fn render<T: Inspectable>(&self, frame: &mut Frame, area: Rect, app: &T) {
+                let state_lines = app.inspect();
+                let height = (area.height as usize).saturating_sub(2);
+                let visible: Vec<_> = state_lines
+                    .iter()
+                    .skip(self.scroll)
+                    .take(height)
+                    .collect();
 
-        # Usage:
-        @inspector = StateInspector.new(self)
+                let content = visible
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-        # Toggle with F12 or similar:
-        if @show_inspector
-          # Overlay on right side
-          inspector_area = tui.rect(
-            x: frame.area.width - 40,
-            y: 0,
-            width: 40,
-            height: frame.area.height
-          )
-          @inspector.render(frame, tui, inspector_area)
-        end
-      RUBY
+                frame.render_widget(
+                    Paragraph::new(content)
+                        .block(
+                            Block::bordered()
+                                .title(format!("State Inspector ({} vars)", state_lines.len()))
+                                .border_style(Style::new().fg(Color::Yellow))
+                        ),
+                    area,
+                );
+            }
+        }
+
+        // Implement for your app:
+        impl Inspectable for App {
+            fn inspect(&self) -> Vec<(String, String)> {
+                vec![
+                    ("running".into(), format!("{}", self.running)),
+                    ("selected".into(), format!("{:?}", self.selected)),
+                    ("items".into(), format!("[{} items]", self.items.len())),
+                    ("mode".into(), format!("{:?}", self.mode)),
+                ]
+            }
+        }
+
+        // Toggle with F12:
+        // if show_inspector {
+        //     let area = Rect::new(frame.area().width - 40, 0, 40, frame.area().height);
+        //     inspector.render(frame, area, &app);
+        // }
+      RUST
     },
     "event_logger" => {
       desc: "Log all events for debugging",
-      code: <<~'RUBY'
-        class EventLogger
-          MAX_EVENTS = 100
+      code: <<~'RUST'
+        use std::collections::VecDeque;
+        use std::time::Instant;
+        use ratatui::{
+            crossterm::event::{Event, KeyEvent, MouseEvent},
+            layout::Rect,
+            widgets::{Block, Paragraph},
+            Frame,
+        };
 
-          def initialize
-            @events = []
-          end
+        struct EventEntry {
+            time: Instant,
+            description: String,
+        }
 
-          def log(event)
-            @events << { time: Time.now, event: event }
-            @events.shift if @events.size > MAX_EVENTS
-          end
+        struct EventLogger {
+            events: VecDeque<EventEntry>,
+            max_events: usize,
+            start_time: Instant,
+        }
 
-          def recent(n = 10)
-            @events.last(n)
-          end
+        impl EventLogger {
+            fn new(max_events: usize) -> Self {
+                Self {
+                    events: VecDeque::new(),
+                    max_events,
+                    start_time: Instant::now(),
+                }
+            }
 
-          def render(frame, tui, area)
-            lines = recent(area.height - 2).map do |entry|
-              time = entry[:time].strftime("%H:%M:%S")
-              evt = entry[:event]
-              case evt
-              in { type: :key, code: code }
-                "[#{time}] KEY: #{code}"
-              in { type: :mouse, kind: kind, x: x, y: y }
-                "[#{time}] MOUSE: #{kind} at (#{x},#{y})"
-              in { type: :resize, width: w, height: h }
-                "[#{time}] RESIZE: #{w}x#{h}"
-              in { type: type }
-                "[#{time}] #{type.upcase}"
-              else
-                "[#{time}] #{evt.inspect}"
-              end
-            end
+            fn log(&mut self, event: &Event) {
+                let description = match event {
+                    Event::Key(KeyEvent { code, modifiers, .. }) => {
+                        format!("KEY: {:?} {:?}", code, modifiers)
+                    }
+                    Event::Mouse(MouseEvent { kind, column, row, .. }) => {
+                        format!("MOUSE: {:?} at ({},{})", kind, column, row)
+                    }
+                    Event::Resize(w, h) => format!("RESIZE: {}x{}", w, h),
+                    Event::FocusGained => "FOCUS_GAINED".into(),
+                    Event::FocusLost => "FOCUS_LOST".into(),
+                    Event::Paste(s) => format!("PASTE: {:?}", s),
+                };
 
-            frame.render_widget(
-              tui.paragraph(
-                text: lines.join("\n"),
-                block: tui.block(title: "Events", borders: [:all])
-              ),
-              area
-            )
-          end
-        end
+                self.events.push_back(EventEntry {
+                    time: Instant::now(),
+                    description,
+                });
 
-        # Usage:
-        @event_log = EventLogger.new
+                if self.events.len() > self.max_events {
+                    self.events.pop_front();
+                }
+            }
 
-        # In event loop:
-        event = tui.poll_event
-        @event_log.log(event) if @debug_mode
-      RUBY
+            fn render(&self, frame: &mut Frame, area: Rect) {
+                let height = (area.height as usize).saturating_sub(2);
+                let lines: Vec<_> = self.events
+                    .iter()
+                    .rev()
+                    .take(height)
+                    .map(|e| {
+                        let elapsed = e.time.duration_since(self.start_time);
+                        format!("[{:.2}s] {}", elapsed.as_secs_f64(), e.description)
+                    })
+                    .collect();
+
+                frame.render_widget(
+                    Paragraph::new(lines.join("\n"))
+                        .block(Block::bordered().title("Events")),
+                    area,
+                );
+            }
+        }
+
+        // Usage:
+        // let mut event_log = EventLogger::new(100);
+        //
+        // // In event loop:
+        // if let Ok(event) = event::read() {
+        //     if debug_mode {
+        //         event_log.log(&event);
+        //     }
+        //     // handle event...
+        // }
+      RUST
     },
     "full" => {
       desc: "Complete debug setup with all helpers",
-      code: <<~'RUBY'
-        # Complete debug setup for RatatuiRuby apps
-        # Add to your app with: require_relative "debug_helpers"
+      code: <<~'RUST'
+        // Complete debug module for Ratatui apps
+        // Add to Cargo.toml: lazy_static = "1.4", chrono = "0.4"
 
-        module DebugHelpers
-          LOG_FILE = File.join(Dir.tmpdir, "tui_debug.log")
+        use std::collections::VecDeque;
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::sync::Mutex;
+        use std::time::{Duration, Instant};
 
-          # File logging
-          def debug_log(msg, level: :info)
-            return unless @debug_mode
-            timestamp = Time.now.strftime("%H:%M:%S.%L")
-            File.open(LOG_FILE, "a") { |f| f.puts "[#{timestamp}] [#{level}] #{msg}" }
-          end
+        use ratatui::{
+            crossterm::event::Event,
+            layout::Rect,
+            style::{Color, Style},
+            widgets::{Block, Clear, Paragraph},
+            Frame,
+        };
 
-          # FPS tracking
-          def init_fps_counter
-            @fps_frames = []
-            @fps_last_time = Time.now
-          end
+        lazy_static::lazy_static! {
+            static ref DEBUG_LOG: Mutex<Option<std::fs::File>> = Mutex::new(None);
+        }
 
-          def tick_fps
-            now = Time.now
-            @fps_frames << (now - @fps_last_time)
-            @fps_frames.shift if @fps_frames.size > 60
-            @fps_last_time = now
-          end
+        pub struct DebugState {
+            enabled: bool,
+            fps_counter: FPSCounter,
+            events: VecDeque<String>,
+            start_time: Instant,
+        }
 
-          def current_fps
-            return 0 if @fps_frames.empty?
-            (1.0 / (@fps_frames.sum / @fps_frames.size)).round(1)
-          end
+        impl DebugState {
+            pub fn new() -> Self {
+                let enabled = std::env::var("DEBUG").is_ok();
+                if enabled {
+                    let file = OpenOptions::new()
+                        .create(true)
+                        .truncate(true)
+                        .write(true)
+                        .open("/tmp/tui_debug.log")
+                        .ok();
+                    *DEBUG_LOG.lock().unwrap() = file;
+                }
+                Self {
+                    enabled,
+                    fps_counter: FPSCounter::new(60),
+                    events: VecDeque::new(),
+                    start_time: Instant::now(),
+                }
+            }
 
-          # Event logging
-          def init_event_log
-            @event_log = []
-          end
+            pub fn is_enabled(&self) -> bool {
+                self.enabled
+            }
 
-          def log_event(event)
-            return unless @debug_mode
-            @event_log << { time: Time.now, event: event }
-            @event_log.shift if @event_log.size > 50
-          end
+            pub fn log(&self, level: &str, msg: &str) {
+                if !self.enabled { return; }
+                if let Some(file) = DEBUG_LOG.lock().unwrap().as_mut() {
+                    let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
+                    let _ = writeln!(file, "[{}] [{}] {}", timestamp, level, msg);
+                }
+            }
 
-          # Render debug overlay
-          def render_debug_overlay(frame, tui)
-            return unless @debug_mode
+            pub fn tick_fps(&mut self) {
+                if self.enabled {
+                    self.fps_counter.tick();
+                }
+            }
 
-            lines = [
-              "FPS: #{current_fps}",
-              "Events: #{@event_log&.size || 0}",
-              "Vars: #{instance_variables.size}",
-              ""
-            ]
+            pub fn log_event(&mut self, event: &Event) {
+                if !self.enabled { return; }
+                let desc = format!("{:?}", event);
+                let truncated = if desc.len() > 40 { &desc[..40] } else { &desc };
+                self.events.push_back(truncated.to_string());
+                if self.events.len() > 10 {
+                    self.events.pop_front();
+                }
+            }
 
-            # Recent events
-            @event_log&.last(5)&.each do |e|
-              lines << "  #{e[:event][:type]}"
-            end
+            pub fn render_overlay(&self, frame: &mut Frame) {
+                if !self.enabled { return; }
 
-            w = 30
-            h = lines.size + 2
-            area = tui.rect(x: frame.area.width - w, y: 0, width: w, height: h)
+                let mut lines = vec![
+                    self.fps_counter.stats(),
+                    format!("Events: {}", self.events.len()),
+                    String::new(),
+                ];
 
-            frame.render_widget(RatatuiRuby::Widgets::Clear.new, area)
-            frame.render_widget(
-              tui.paragraph(
-                text: lines.join("\n"),
-                block: tui.block(title: "[DEBUG]", borders: [:all], border_style: tui.style(fg: :yellow))
-              ),
-              area
-            )
-          end
-        end
+                for event in self.events.iter().rev().take(5) {
+                    lines.push(format!("  {}", event));
+                }
 
-        # Usage in your app:
-        #
-        # class MyApp
-        #   include DebugHelpers
-        #
-        #   def initialize
-        #     @debug_mode = ENV["DEBUG"] == "1"
-        #     init_fps_counter if @debug_mode
-        #     init_event_log if @debug_mode
-        #   end
-        #
-        #   def run
-        #     RatatuiRuby.run do |tui|
-        #       loop do
-        #         tick_fps if @debug_mode
-        #         tui.draw do |frame|
-        #           render(frame, tui)
-        #           render_debug_overlay(frame, tui)
-        #         end
-        #         event = tui.poll_event
-        #         log_event(event)
-        #         # ...
-        #       end
-        #     end
-        #   end
-        # end
-        #
-        # Run with: DEBUG=1 ruby my_app.rb
-        # Tail log: tail -f /tmp/tui_debug.log
-      RUBY
+                let w = 35;
+                let h = lines.len() as u16 + 2;
+                let area = Rect::new(frame.area().width.saturating_sub(w), 0, w, h);
+
+                frame.render_widget(Clear, area);
+                frame.render_widget(
+                    Paragraph::new(lines.join("\n"))
+                        .block(
+                            Block::bordered()
+                                .title("[DEBUG]")
+                                .border_style(Style::new().fg(Color::Yellow))
+                        ),
+                    area,
+                );
+            }
+        }
+
+        struct FPSCounter {
+            frame_times: VecDeque<Duration>,
+            last_frame: Instant,
+            sample_size: usize,
+        }
+
+        impl FPSCounter {
+            fn new(sample_size: usize) -> Self {
+                Self {
+                    frame_times: VecDeque::with_capacity(sample_size),
+                    last_frame: Instant::now(),
+                    sample_size,
+                }
+            }
+
+            fn tick(&mut self) {
+                let now = Instant::now();
+                self.frame_times.push_back(now - self.last_frame);
+                self.last_frame = now;
+                if self.frame_times.len() > self.sample_size {
+                    self.frame_times.pop_front();
+                }
+            }
+
+            fn fps(&self) -> f64 {
+                if self.frame_times.is_empty() { return 0.0; }
+                let avg: Duration = self.frame_times.iter().sum::<Duration>() / self.frame_times.len() as u32;
+                1.0 / avg.as_secs_f64()
+            }
+
+            fn stats(&self) -> String {
+                format!("FPS: {:.1}", self.fps())
+            }
+        }
+
+        // Usage in your app:
+        //
+        // struct App {
+        //     debug: DebugState,
+        //     // ...
+        // }
+        //
+        // impl App {
+        //     fn new() -> Self {
+        //         Self {
+        //             debug: DebugState::new(),
+        //             // ...
+        //         }
+        //     }
+        //
+        //     fn run(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        //         loop {
+        //             self.debug.tick_fps();
+        //
+        //             terminal.draw(|frame| {
+        //                 self.render(frame);
+        //                 self.debug.render_overlay(frame);
+        //             })?;
+        //
+        //             if let Event::Key(key) = event::read()? {
+        //                 self.debug.log_event(&Event::Key(key));
+        //                 // handle key...
+        //             }
+        //         }
+        //     }
+        // }
+        //
+        // Run with: DEBUG=1 cargo run
+        // Tail log: tail -f /tmp/tui_debug.log
+      RUST
     }
   }.freeze
 
@@ -379,7 +522,9 @@ class RatatuiDebug < Claude::Generator
     section name
     info template[:desc]
     puts
+    puts "```rust"
     puts template[:code]
+    puts "```"
   end
 end
 

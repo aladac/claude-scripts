@@ -1,276 +1,370 @@
-# RatatuiRuby Testing
+# Ratatui Testing
 
-Test TUI applications without a real terminal.
+Test TUI applications without a real terminal using `TestBackend`.
 
 ## Setup
 
-```ruby
-require "ratatui_ruby/test_helper"
-require "minitest/autorun"
+```rust
+use ratatui::{
+    backend::TestBackend,
+    Terminal,
+    widgets::{Paragraph, Block},
+};
 
-class MyAppTest < Minitest::Test
-  include RatatuiRuby::TestHelper
-  # ...
-end
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rendering() {
+        // Create test terminal (80x24)
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| {
+            frame.render_widget(
+                Paragraph::new("Hello World"),
+                frame.area(),
+            );
+        }).unwrap();
+
+        // Inspect buffer
+        let buffer = terminal.backend().buffer();
+        assert!(buffer_contains(buffer, "Hello World"));
+    }
+}
 ```
 
 ---
 
-## Test Terminal
+## TestBackend
 
-Wrap tests in `with_test_terminal` for a headless, in-memory terminal backend.
+Create a terminal with no actual display.
 
-```ruby
-def test_rendering
-  # Default: 80x24 terminal
-  with_test_terminal do
-    widget = Paragraph.new(text: "Hello World")
+```rust
+// Default: 80x24
+let backend = TestBackend::new(80, 24);
 
-    RatatuiRuby.draw do |frame|
-      frame.render_widget(widget, frame.area)
-    end
+// Custom size
+let backend = TestBackend::new(40, 10);
 
-    assert_includes buffer_content.first, "Hello World"
-  end
-end
-
-# Custom size
-with_test_terminal(40, 10) do
-  # 40 columns, 10 rows
-end
+// Create terminal
+let mut terminal = Terminal::new(backend).unwrap();
 ```
 
 ---
 
 ## Buffer Inspection
 
-### buffer_content
+### Raw Buffer Access
 
-Returns terminal as array of strings (one per row).
+```rust
+let buffer = terminal.backend().buffer();
 
-```ruby
-with_test_terminal do
-  MyApp.new.render
-
-  lines = buffer_content
-  assert_equal "Expected text", lines[0].strip
-  assert_match /pattern/, lines[1]
-end
+// Get cell at position
+let cell = buffer.get(0, 0);
+cell.symbol();  // Character as &str
+cell.fg;        // Foreground color
+cell.bg;        // Background color
+cell.modifier;  // Modifiers (bold, italic, etc.)
 ```
 
-### get_cell
+### Helper Functions
 
-Inspect a single cell's character and style.
+```rust
+fn buffer_contains(buffer: &Buffer, text: &str) -> bool {
+    let content: String = buffer
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    content.contains(text)
+}
 
-```ruby
-with_test_terminal do
-  MyApp.new.render
+fn buffer_line(buffer: &Buffer, y: u16) -> String {
+    (0..buffer.area.width)
+        .map(|x| buffer.get(x, y).symbol())
+        .collect()
+}
 
-  cell = get_cell(0, 0)
-  cell.symbol  # => "H"
-  cell.fg      # => :red
-  cell.bg      # => :black
-  cell.bold?   # => true
-end
+fn assert_buffer_eq(buffer: &Buffer, expected: Vec<&str>) {
+    for (y, line) in expected.iter().enumerate() {
+        let actual = buffer_line(buffer, y as u16);
+        assert_eq!(actual.trim_end(), *line, "Line {}", y);
+    }
+}
 ```
 
-### print_buffer
+### Example
 
-Output buffer to STDOUT with ANSI colors (for debugging).
+```rust
+#[test]
+fn test_list_rendering() {
+    let backend = TestBackend::new(20, 5);
+    let mut terminal = Terminal::new(backend).unwrap();
 
-```ruby
-with_test_terminal do
-  MyApp.new.render
-  print_buffer  # Prints colored output
-end
+    terminal.draw(|frame| {
+        let items = vec!["Item 1", "Item 2", "Item 3"];
+        let list = List::new(items);
+        frame.render_widget(list, frame.area());
+    }).unwrap();
+
+    let buffer = terminal.backend().buffer();
+    assert!(buffer_contains(buffer, "Item 1"));
+    assert!(buffer_contains(buffer, "Item 2"));
+    assert!(buffer_contains(buffer, "Item 3"));
+}
 ```
 
 ---
 
 ## Style Assertions
 
-```ruby
-# Single cell
-assert_fg_color(:red, 0, 0)
-assert_bg_color(:blue, 0, 0)
-assert_bold(0, 0)
+```rust
+fn assert_style_at(buffer: &Buffer, x: u16, y: u16, expected: Style) {
+    let cell = buffer.get(x, y);
+    assert_eq!(cell.fg, expected.fg.unwrap_or(Color::Reset));
+    assert_eq!(cell.bg, expected.bg.unwrap_or(Color::Reset));
+}
 
-# Area (x, y, width, height)
-assert_area_style({ x: 0, y: 0, w: 10, h: 1 }, bg: :blue)
-```
+#[test]
+fn test_styled_text() {
+    let backend = TestBackend::new(20, 5);
+    let mut terminal = Terminal::new(backend).unwrap();
 
----
+    terminal.draw(|frame| {
+        frame.render_widget(
+            Paragraph::new("Error").style(Style::new().fg(Color::Red)),
+            frame.area(),
+        );
+    }).unwrap();
 
-## Event Injection
-
-Simulate user input without stubbing.
-
-```ruby
-with_test_terminal do
-  # Single key
-  inject_event("key", { code: "q" })
-
-  event = RatatuiRuby.poll_event
-  assert_equal "q", event.code
-end
-```
-
-### Helpers
-
-```ruby
-# Multiple keys
-inject_keys("hello")
-
-# Key with modifiers
-inject_event("key", { code: "c", modifiers: ["ctrl"] })
-
-# Mouse click
-inject_click(10, 5, button: "left")
+    let cell = terminal.backend().buffer().get(0, 0);
+    assert_eq!(cell.fg, Color::Red);
+}
 ```
 
 ---
 
 ## Snapshot Testing
 
-Compare screen against stored reference files.
+Compare buffer against expected output.
 
-```ruby
-with_test_terminal do
-  MyApp.new.run
-  assert_snapshots("dashboard_view")
-end
+```rust
+#[test]
+fn test_dashboard_snapshot() {
+    let backend = TestBackend::new(40, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal.draw(|frame| {
+        render_dashboard(frame);
+    }).unwrap();
+
+    let expected = vec![
+        "┌──────────────────────────────────────┐",
+        "│            Dashboard                 │",
+        "├──────────────────────────────────────┤",
+        "│ Status: OK                           │",
+        "│ Items: 42                            │",
+        "│                                      │",
+        "│                                      │",
+        "│                                      │",
+        "│                                      │",
+        "└──────────────────────────────────────┘",
+    ];
+
+    assert_buffer_eq(terminal.backend().buffer(), expected);
+}
 ```
 
-This generates:
-- `dashboard_view.txt` — Plain text
-- `dashboard_view.ansi` — With ANSI escape codes
+### Using insta for Snapshots
 
-View ANSI snapshots: `cat test/snapshots/*.ansi`
+```toml
+[dev-dependencies]
+insta = "1.34"
+```
 
-### Determinism
+```rust
+use insta::assert_snapshot;
 
-Snapshots must be reproducible. Avoid:
-- Random data (use fixed seed)
-- Current timestamps (stub `Time.now`)
+#[test]
+fn test_ui_snapshot() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
 
-```ruby
-def setup
-  @fixed_time = Time.new(2025, 1, 1, 12, 0, 0)
-  Time.stub(:now, @fixed_time) do
-    yield
-  end
-end
+    terminal.draw(|frame| render_ui(frame)).unwrap();
+
+    let content = buffer_to_string(terminal.backend().buffer());
+    assert_snapshot!(content);
+}
+
+fn buffer_to_string(buffer: &Buffer) -> String {
+    let mut output = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            output.push_str(buffer.get(x, y).symbol());
+        }
+        output.push('\n');
+    }
+    output
+}
 ```
 
 ---
 
-## Isolated View Testing
+## Testing App State
 
-Test views without the full terminal engine.
+```rust
+struct App {
+    items: Vec<String>,
+    selected: usize,
+}
 
-```ruby
-def test_logs_view
-  frame = RatatuiRuby::TestHelper::TestDoubles::MockFrame.new
-  area = RatatuiRuby::TestHelper::TestDoubles::StubRect.new(width: 40, height: 10)
+impl App {
+    fn next(&mut self) {
+        if self.selected < self.items.len() - 1 {
+            self.selected += 1;
+        }
+    }
 
-  MyView.new.render(frame, area)
+    fn previous(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+}
 
-  rendered = frame.rendered_widgets.first
-  assert_equal "Logs", rendered[:widget].block.title
-end
+#[test]
+fn test_navigation() {
+    let mut app = App {
+        items: vec!["A".into(), "B".into(), "C".into()],
+        selected: 0,
+    };
+
+    assert_eq!(app.selected, 0);
+
+    app.next();
+    assert_eq!(app.selected, 1);
+
+    app.next();
+    assert_eq!(app.selected, 2);
+
+    app.next();  // Should not go past last
+    assert_eq!(app.selected, 2);
+
+    app.previous();
+    assert_eq!(app.selected, 1);
+}
+```
+
+---
+
+## Testing Event Handling
+
+```rust
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+impl App {
+    fn handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('q') => return false,  // Quit
+            KeyCode::Down | KeyCode::Char('j') => self.next(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous(),
+            _ => {}
+        }
+        true  // Continue
+    }
+}
+
+#[test]
+fn test_quit_on_q() {
+    let mut app = App::default();
+    let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
+    assert!(!app.handle_key(key));
+}
+
+#[test]
+fn test_navigation_keys() {
+    let mut app = App {
+        items: vec!["A".into(), "B".into()],
+        selected: 0,
+    };
+
+    let down = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
+    app.handle_key(down);
+    assert_eq!(app.selected, 1);
+
+    let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+    app.handle_key(up);
+    assert_eq!(app.selected, 0);
+}
+```
+
+---
+
+## Integration Testing
+
+Test full render + input cycle.
+
+```rust
+#[test]
+fn test_full_interaction() {
+    let backend = TestBackend::new(40, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut app = App::new();
+
+    // Initial render
+    terminal.draw(|f| app.render(f)).unwrap();
+    assert!(buffer_contains(terminal.backend().buffer(), "Item 1"));
+
+    // Simulate key press
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+
+    // Re-render
+    terminal.draw(|f| app.render(f)).unwrap();
+
+    // Verify selection changed
+    let buffer = terminal.backend().buffer();
+    // Check highlight moved to second item
+}
 ```
 
 ---
 
 ## Debugging Tests
 
-### Debug Mode
+### Print Buffer
 
-Auto-enabled when including `TestHelper`. Provides better backtraces.
+```rust
+fn print_buffer(buffer: &Buffer) {
+    for y in 0..buffer.area.height {
+        let line: String = (0..buffer.area.width)
+            .map(|x| buffer.get(x, y).symbol())
+            .collect();
+        println!("{:2}: |{}|", y, line);
+    }
+}
 
-```ruby
-# Or enable manually
-RatatuiRuby.debug_mode!
+#[test]
+fn debug_rendering() {
+    // ... setup ...
+    terminal.draw(|f| render(f)).unwrap();
+    print_buffer(terminal.backend().buffer());
+    // View output with: cargo test -- --nocapture
+}
 ```
 
-### File Logging
+### Colored Output
 
-Write debug output to a file instead of corrupting the display.
-
-```ruby
-DEBUG_LOG = File.open("debug.log", "a")
-
-def debug(msg)
-  DEBUG_LOG.puts("[#{Time.now}] #{msg}")
-  DEBUG_LOG.flush
-end
-```
-
-Tail in another terminal: `tail -f debug.log`
-
-### Interactive Debugger
-
-Standard debuggers conflict with raw mode. Options:
-
-```ruby
-# Option 1: Exit TUI temporarily
-RatatuiRuby.restore_terminal
-binding.pry
-RatatuiRuby.init_terminal
-
-# Option 2: Debug in test mode (no conflict)
-with_test_terminal do
-  binding.pry
-  MyApp.new.render
-end
-
-# Option 3: Remote debugging
-# Terminal 1: ruby my_app.rb (calls RatatuiRuby.debug_mode!)
-# Terminal 2: rdbg --attach
-```
-
----
-
-## Testing Custom Widgets
-
-Custom widgets return draw command arrays. Test directly.
-
-```ruby
-def test_hello_widget
-  area = Rect.new(x: 0, y: 0, width: 20, height: 5)
-  widget = HelloWidget.new
-  commands = widget.render(area)
-
-  assert_equal 1, commands.length
-  assert_equal "Hello, World!", commands[0].string
-end
-```
-
-Or use the test terminal for visual verification:
-
-```ruby
-def test_renders_correctly
-  with_test_terminal(10, 5) do
-    RatatuiRuby.draw(MyWidget.new)
-    assert_equal "Expected  ", buffer_content[0]
-  end
-end
-```
-
----
-
-## Error Classes
-
-Catch specific exceptions:
-
-```ruby
-begin
-  RatatuiRuby.run { |tui| ... }
-rescue RatatuiRuby::Error::Terminal => e
-  # I/O failure (backend crashed)
-rescue RatatuiRuby::Error::Safety => e
-  # Lifetime violation (using Frame after block exits)
-rescue RatatuiRuby::Error::Invariant => e
-  # Contract violation (double init)
-end
+```rust
+fn print_buffer_colored(buffer: &Buffer) {
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            let cell = buffer.get(x, y);
+            // Use ANSI escape codes based on cell.fg/bg
+            print!("{}", cell.symbol());
+        }
+        println!();
+    }
+}
 ```

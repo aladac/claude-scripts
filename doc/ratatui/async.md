@@ -1,256 +1,370 @@
-# RatatuiRuby Async Operations
+# Ratatui Async Operations
 
-Handle slow operations without freezing the UI.
+Handle slow operations without freezing the UI using Tokio.
 
-## The Raw Terminal Problem
+## Tokio Integration
 
-Inside `RatatuiRuby.run`, the terminal is in raw mode:
-- stdin reconfigured for character-by-character input
-- stdout carries escape sequences
-- External commands expecting normal terminal I/O fail
+Ratatui works well with Tokio for async operations.
 
-### What Breaks in Threads
-
-```ruby
-# These fail inside a Thread during raw mode:
-`git ls-remote --tags origin`           # Returns empty or hangs
-IO.popen(["git", "ls-remote", ...])     # Same
-Open3.capture2("git", "ls-remote", ...) # Same
+```toml
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["full"] }
 ```
-
-Commands succeed synchronously but fail asynchronously because threads inherit the parent's raw terminal state.
 
 ---
 
-## Solutions
+## Basic Async Pattern
 
-### 1. Pre-Check Before Raw Mode
+```rust
+use tokio::sync::mpsc;
+use std::time::Duration;
 
-Run slow operations before entering the TUI:
+enum AppEvent {
+    Input(crossterm::event::Event),
+    Tick,
+    DataLoaded(Vec<String>),
+}
 
-```ruby
-def initialize
-  @data = fetch_data  # Runs before RatatuiRuby.run
-end
+struct App {
+    data: Vec<String>,
+    loading: bool,
+}
 
-def run
-  RatatuiRuby.run do |tui|
-    # @data already available
-  end
-end
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let mut terminal = ratatui::init();
+    let result = run(&mut terminal).await;
+    ratatui::restore();
+    result
+}
+
+async fn run(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
+    let mut app = App { data: vec![], loading: true };
+
+    // Spawn input handler
+    let tx_input = tx.clone();
+    tokio::spawn(async move {
+        loop {
+            if crossterm::event::poll(Duration::from_millis(100)).unwrap() {
+                if let Ok(event) = crossterm::event::read() {
+                    let _ = tx_input.send(AppEvent::Input(event));
+                }
+            }
+        }
+    });
+
+    // Spawn data loader
+    let tx_data = tx.clone();
+    tokio::spawn(async move {
+        let data = fetch_data().await;
+        let _ = tx_data.send(AppEvent::DataLoaded(data));
+    });
+
+    // Main loop
+    loop {
+        terminal.draw(|frame| app.render(frame))?;
+
+        if let Some(event) = rx.recv().await {
+            match event {
+                AppEvent::Input(Event::Key(key)) => {
+                    if key.code == KeyCode::Char('q') {
+                        break;
+                    }
+                }
+                AppEvent::DataLoaded(data) => {
+                    app.data = data;
+                    app.loading = false;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn fetch_data() -> Vec<String> {
+    // Simulate async fetch
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    vec!["Item 1".into(), "Item 2".into()]
+}
 ```
-
-**Trade-off**: Delays startup.
 
 ---
 
-### 2. Process.spawn with File Output
+## Channel-Based Architecture
 
-Spawn a separate process before raw mode. Write results to a temp file. Poll for completion.
+```rust
+use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 
-```ruby
-class AsyncChecker
-  CACHE_FILE = File.join(Dir.tmpdir, "my_check_result.txt")
+// Messages from background tasks to UI
+enum Message {
+    DataLoaded(Vec<Item>),
+    Error(String),
+    Progress(f64),
+}
 
-  def initialize
-    @loading = true
-    @result = nil
-    @pid = Process.spawn("my-command > #{CACHE_FILE}")
-  end
+// Commands from UI to background
+enum Command {
+    LoadData,
+    Cancel,
+}
 
-  def loading?
-    return false unless @loading
+struct App {
+    tx: UnboundedSender<Command>,
+    rx: UnboundedReceiver<Message>,
+    state: AppState,
+}
 
-    # Non-blocking poll
-    _pid, status = Process.waitpid2(@pid, Process::WNOHANG)
-    if status
-      @result = File.read(CACHE_FILE).strip
-      @loading = false
-    end
-    @loading
-  end
+impl App {
+    fn new() -> Self {
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Message>();
 
-  def result
-    @result
-  end
-end
+        // Background worker
+        tokio::spawn(async move {
+            while let Some(cmd) = cmd_rx.recv().await {
+                match cmd {
+                    Command::LoadData => {
+                        let result = fetch_data().await;
+                        let _ = msg_tx.send(Message::DataLoaded(result));
+                    }
+                    Command::Cancel => break,
+                }
+            }
+        });
+
+        Self {
+            tx: cmd_tx,
+            rx: msg_rx,
+            state: AppState::default(),
+        }
+    }
+
+    fn load_data(&self) {
+        let _ = self.tx.send(Command::LoadData);
+    }
+
+    fn poll_messages(&mut self) {
+        while let Ok(msg) = self.rx.try_recv() {
+            match msg {
+                Message::DataLoaded(data) => self.state.data = data,
+                Message::Error(e) => self.state.error = Some(e),
+                Message::Progress(p) => self.state.progress = p,
+            }
+        }
+    }
+}
 ```
-
-**Key points**:
-- `Process.spawn` returns immediately
-- Command runs in separate process, not a thread
-- Results pass through temp file (avoids pipe/terminal issues)
-- `Process::WNOHANG` polls without blocking
 
 ---
 
-### 3. Thread for CPU-Bound Work
+## Non-Blocking Event Loop
 
-Ruby threads work for pure computation (no I/O):
+```rust
+use std::time::{Duration, Instant};
 
-```ruby
-Thread.new { @result = expensive_calculation }
+async fn run(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    let tick_rate = Duration::from_millis(100);
+    let mut last_tick = Instant::now();
+
+    loop {
+        terminal.draw(|frame| app.render(frame))?;
+
+        // Poll messages from background tasks
+        app.poll_messages();
+
+        // Non-blocking event check
+        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        if crossterm::event::poll(timeout)? {
+            if let Event::Key(key) = crossterm::event::read()? {
+                if key.code == KeyCode::Char('q') {
+                    break;
+                }
+                app.handle_key(key);
+            }
+        }
+
+        if last_tick.elapsed() >= tick_rate {
+            app.tick();  // Update animations, timers
+            last_tick = Instant::now();
+        }
+    }
+
+    Ok(())
+}
 ```
-
-**Never use threads for shell commands in TUI apps.**
 
 ---
 
-## Pattern Summary
+## Spawning Shell Commands
 
-| Approach | Use Case | Raw Mode Safe? |
-|----------|----------|----------------|
-| Sync before TUI | Fast checks (<100ms) | Yes |
-| Process.spawn + file | Shell commands, network | Yes |
-| Thread | CPU-bound Ruby code | Yes |
-| Thread + shell | Shell commands | **No** |
+```rust
+use tokio::process::Command;
+
+async fn run_command(cmd: &str) -> Result<String, std::io::Error> {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .output()
+        .await?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+// In background task
+tokio::spawn(async move {
+    match run_command("git status").await {
+        Ok(output) => tx.send(Message::CommandOutput(output)),
+        Err(e) => tx.send(Message::Error(e.to_string())),
+    }
+});
+```
 
 ---
 
-## Real Example: Background Check
+## HTTP Requests
 
-```ruby
-class BackgroundCheck
-  CACHE_FILE = File.join(Dir.tmpdir, "check_result.txt")
+```rust
+use reqwest;
 
-  def initialize(command)
-    @command = command
-    @loading = true
-    @success = nil
-    @pid = Process.spawn("#{command} && echo ok > #{CACHE_FILE} || echo fail > #{CACHE_FILE}")
-  end
+async fn fetch_api_data() -> Result<Vec<Item>, reqwest::Error> {
+    let response = reqwest::get("https://api.example.com/items")
+        .await?
+        .json::<Vec<Item>>()
+        .await?;
+    Ok(response)
+}
 
-  def loading?
-    return false unless @loading
-
-    _pid, status = Process.waitpid2(@pid, Process::WNOHANG)
-    if status
-      @success = File.read(CACHE_FILE).strip == "ok"
-      @loading = false
-    end
-    @loading
-  end
-
-  def success?
-    @success
-  end
-end
+// Spawn from UI
+let tx = tx.clone();
+tokio::spawn(async move {
+    match fetch_api_data().await {
+        Ok(data) => tx.send(Message::DataLoaded(data)),
+        Err(e) => tx.send(Message::Error(e.to_string())),
+    }
+});
 ```
 
-### In the TUI
+---
 
-```ruby
-RatatuiRuby.run do |tui|
-  checker = BackgroundCheck.new("curl -s https://api.example.com/health")
+## Progress Updates
 
-  loop do
-    tui.draw do |frame|
-      status = if checker.loading?
-        "Checking... ⏳"
-      elsif checker.success?
-        "OK ✓"
-      else
-        "Failed ✗"
-      end
+```rust
+async fn download_with_progress(
+    url: &str,
+    tx: UnboundedSender<Message>,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let response = reqwest::get(url).await?;
+    let total = response.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+    let mut data = Vec::new();
 
-      frame.render_widget(
-        tui.paragraph(text: status),
-        frame.area
-      )
-    end
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        downloaded += chunk.len() as u64;
+        data.extend_from_slice(&chunk);
 
-    case tui.poll_event
-    in { type: :key, code: "q" }
-      break
-    else
-      nil
-    end
-  end
-end
+        let progress = if total > 0 {
+            downloaded as f64 / total as f64
+        } else {
+            0.0
+        };
+        let _ = tx.send(Message::Progress(progress));
+    }
+
+    Ok(data)
+}
+```
+
+---
+
+## Cancellation
+
+```rust
+use tokio_util::sync::CancellationToken;
+
+struct App {
+    cancel_token: CancellationToken,
+}
+
+impl App {
+    fn start_task(&self) {
+        let token = self.cancel_token.clone();
+        let tx = self.tx.clone();
+
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    // Task was cancelled
+                }
+                result = long_running_task() => {
+                    let _ = tx.send(Message::TaskComplete(result));
+                }
+            }
+        });
+    }
+
+    fn cancel(&self) {
+        self.cancel_token.cancel();
+    }
+}
 ```
 
 ---
 
 ## Multiple Background Tasks
 
-```ruby
-class TaskRunner
-  Task = Data.define(:name, :pid, :file, :status) do
-    def loading?
-      status == :loading
-    end
-  end
+```rust
+struct TaskManager {
+    tasks: HashMap<TaskId, JoinHandle<()>>,
+    cancel_tokens: HashMap<TaskId, CancellationToken>,
+}
 
-  def initialize
-    @tasks = []
-  end
+impl TaskManager {
+    fn spawn<F>(&mut self, id: TaskId, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let token = CancellationToken::new();
+        self.cancel_tokens.insert(id, token.clone());
 
-  def add(name, command)
-    file = File.join(Dir.tmpdir, "task_#{name}.txt")
-    pid = Process.spawn("#{command} > #{file} 2>&1")
-    @tasks << Task.new(name:, pid:, file:, status: :loading)
-  end
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                _ = token.cancelled() => {}
+                _ = future => {}
+            }
+        });
 
-  def poll_all
-    @tasks = @tasks.map do |task|
-      next task unless task.loading?
+        self.tasks.insert(id, handle);
+    }
 
-      _pid, status = Process.waitpid2(task.pid, Process::WNOHANG)
-      if status
-        task.with(status: status.success? ? :success : :failed)
-      else
-        task
-      end
-    end
-  end
+    fn cancel(&mut self, id: TaskId) {
+        if let Some(token) = self.cancel_tokens.get(&id) {
+            token.cancel();
+        }
+    }
 
-  def each(&block)
-    @tasks.each(&block)
-  end
-end
-```
-
-### Usage
-
-```ruby
-runner = TaskRunner.new
-runner.add("api", "curl -s https://api.example.com")
-runner.add("db", "pg_isready -h localhost")
-runner.add("redis", "redis-cli ping")
-
-RatatuiRuby.run do |tui|
-  loop do
-    runner.poll_all
-
-    tui.draw do |frame|
-      items = runner.map do |task|
-        icon = case task.status
-               when :loading then "⏳"
-               when :success then "✓"
-               when :failed  then "✗"
-               end
-        "#{icon} #{task.name}"
-      end
-
-      frame.render_widget(tui.list(items:), frame.area)
-    end
-
-    break if tui.poll_event == "q"
-  end
-end
+    fn cancel_all(&mut self) {
+        for token in self.cancel_tokens.values() {
+            token.cancel();
+        }
+    }
+}
 ```
 
 ---
 
-## Git Credentials Issue
+## Pattern Summary
 
-Git/SSH commands that require credentials will hang or fail in raw mode because they try to read from the reconfigured stdin.
-
-**Workaround**: Set `GIT_TERMINAL_PROMPT=0` to prevent prompts (auth fails silently instead of hanging):
-
-```ruby
-pid = Process.spawn(
-  { "GIT_TERMINAL_PROMPT" => "0" },
-  "git ls-remote --tags origin > #{CACHE_FILE}"
-)
-```
+| Pattern | Use Case |
+|---------|----------|
+| `mpsc` channel | UI ↔ background communication |
+| `tokio::spawn` | Background tasks |
+| `CancellationToken` | Graceful task cancellation |
+| `tokio::select!` | Wait for multiple futures |
+| `try_recv()` | Non-blocking message polling |

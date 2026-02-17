@@ -9,208 +9,357 @@ class RatatuiExample < Claude::Generator
   PATTERNS = {
     "layout" => "Nested layouts with constraints",
     "events" => "Pattern matching for input",
-    "async" => "Background shell commands",
+    "async" => "Background tasks with Tokio",
     "stateful" => "Interactive list with state",
     "custom-widget" => "Build your own widget",
-    "testing" => "Test with TestHelper",
-    "inline" => "CLI tool with inline viewport",
+    "testing" => "Test with TestBackend",
     "mouse" => "Handle mouse events",
     "style" => "Colors and modifiers"
   }.freeze
 
   EXAMPLES = {
-    "layout" => <<~RUBY,
-      tui.draw do |frame|
-        # Main: sidebar + content
-        cols = tui.layout_split(frame.area, direction: :horizontal, constraints: [
-          tui.constraint_length(25),
-          tui.constraint_fill(1)
-        ])
+    "layout" => <<~RUST,
+      use ratatui::layout::{Constraint, Layout};
 
-        # Content: header + body + footer
-        rows = tui.layout_split(cols[1], direction: :vertical, constraints: [
-          tui.constraint_length(3),
-          tui.constraint_fill(1),
-          tui.constraint_length(1)
-        ])
+      fn render(&self, frame: &mut Frame) {
+          // Main: sidebar + content
+          let [sidebar, content] = Layout::horizontal([
+              Constraint::Length(25),
+              Constraint::Fill(1),
+          ]).areas(frame.area());
 
-        frame.render_widget(sidebar_widget, cols[0])
-        frame.render_widget(header_widget, rows[0])
-        frame.render_widget(body_widget, rows[1])
-        frame.render_widget(footer_widget, rows[2])
-      end
-    RUBY
+          // Content: header + body + footer
+          let [header, body, footer] = Layout::vertical([
+              Constraint::Length(3),
+              Constraint::Fill(1),
+              Constraint::Length(1),
+          ]).areas(content);
 
-    "events" => <<~RUBY,
-      case tui.poll_event
-      in { type: :key, code: "q" } | { type: :key, code: "c", modifiers: ["ctrl"] }
-        break
-      in { type: :key, code: "up" | "k" }
-        move_up
-      in { type: :key, code: "down" | "j" }
-        move_down
-      in { type: :key, code: /^[a-z]$/ => char }
-        handle_char(char)
-      in { type: :resize, width:, height: }
-        @size = [width, height]
-      in { type: :none }
-        # Timeout, no event
-      else
-        nil
-      end
-    RUBY
+          frame.render_widget(self.sidebar_widget(), sidebar);
+          frame.render_widget(self.header_widget(), header);
+          frame.render_widget(self.body_widget(), body);
+          frame.render_widget(self.footer_widget(), footer);
+      }
+    RUST
 
-    "async" => <<~RUBY,
-      class AsyncTask
-        def initialize(command)
-          @file = File.join(Dir.tmpdir, "task_\#{object_id}.txt")
-          @pid = Process.spawn("\#{command} > \#{@file} 2>&1")
-          @loading = true
-          @result = nil
-        end
+    "events" => <<~RUST,
+      use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
 
-        def poll
-          return unless @loading
-          _pid, status = Process.waitpid2(@pid, Process::WNOHANG)
-          if status
-            @result = File.read(@file).strip
-            @success = status.success?
-            @loading = false
-          end
-        end
+      fn handle_events(&mut self) -> std::io::Result<bool> {
+          match event::read()? {
+              // Quit on 'q' or Ctrl+C
+              Event::Key(key) if key.code == KeyCode::Char('q') => return Ok(false),
+              Event::Key(key) if key.code == KeyCode::Char('c')
+                  && key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(false),
 
-        def loading? = @loading
-        def success? = @success
-        def result = @result
-      end
+              // Navigation
+              Event::Key(key) => match key.code {
+                  KeyCode::Up | KeyCode::Char('k') => self.move_up(),
+                  KeyCode::Down | KeyCode::Char('j') => self.move_down(),
+                  KeyCode::Enter => self.select(),
+                  KeyCode::Char(c) => self.handle_char(c),
+                  _ => {}
+              },
 
-      # Usage
-      @task = AsyncTask.new("curl -s https://api.example.com")
-      # In event loop: @task.poll
-    RUBY
+              // Resize
+              Event::Resize(width, height) => {
+                  self.size = (width, height);
+              }
 
-    "stateful" => <<~RUBY,
-      @list_state = RatatuiRuby::State::ListState.new
-      @list_state.select(0)
+              _ => {}
+          }
+          Ok(true)
+      }
+    RUST
 
-      # Render
-      list = tui.list(
-        items: @items,
-        highlight_style: tui.style(modifiers: [:reversed]),
-        highlight_symbol: ">> "
-      )
-      frame.render_stateful_widget(list, area, @list_state)
+    "async" => <<~RUST,
+      use std::sync::mpsc;
+      use std::thread;
+      use std::time::Duration;
 
-      # Navigate
-      @list_state.select_next
-      @list_state.select_previous
-      @list_state.select_first
-      @list_state.select_last
+      enum AppEvent {
+          Key(KeyEvent),
+          Tick,
+          TaskComplete(String),
+      }
 
-      # Get selection
-      selected_index = @list_state.selected
-    RUBY
+      fn main() -> std::io::Result<()> {
+          let (tx, rx) = mpsc::channel();
 
-    "custom-widget" => <<~RUBY,
-      class ProgressBar
-        def initialize(progress:, style: nil)
-          @progress = progress.clamp(0.0, 1.0)
-          @style = style || RatatuiRuby::Style::Style.new(fg: :green)
-        end
+          // Spawn tick thread
+          let tick_tx = tx.clone();
+          thread::spawn(move || {
+              loop {
+                  thread::sleep(Duration::from_millis(100));
+                  if tick_tx.send(AppEvent::Tick).is_err() {
+                      break;
+                  }
+              }
+          });
 
-        def render(area)
-          filled = (area.width * @progress).round
-          bar = "█" * filled + "░" * (area.width - filled)
+          // Spawn background task
+          let task_tx = tx.clone();
+          thread::spawn(move || {
+              // Simulate async work
+              thread::sleep(Duration::from_secs(2));
+              let result = "Task completed!".to_string();
+              let _ = task_tx.send(AppEvent::TaskComplete(result));
+          });
 
-          [RatatuiRuby::Draw.string(area.x, area.y, bar, @style)]
-        end
-      end
+          // Event thread for keyboard
+          let key_tx = tx.clone();
+          thread::spawn(move || {
+              loop {
+                  if event::poll(Duration::from_millis(50)).unwrap() {
+                      if let Event::Key(key) = event::read().unwrap() {
+                          if key_tx.send(AppEvent::Key(key)).is_err() {
+                              break;
+                          }
+                      }
+                  }
+              }
+          });
 
-      # Usage
-      frame.render_widget(ProgressBar.new(progress: 0.75), area)
-    RUBY
+          // Main loop
+          loop {
+              terminal.draw(|frame| app.render(frame))?;
 
-    "testing" => <<~RUBY,
-      require "ratatui_ruby/test_helper"
+              match rx.recv()? {
+                  AppEvent::Key(key) if key.code == KeyCode::Char('q') => break,
+                  AppEvent::TaskComplete(result) => app.task_result = Some(result),
+                  AppEvent::Tick => app.tick(),
+                  _ => {}
+              }
+          }
+          Ok(())
+      }
+    RUST
 
-      class MyAppTest < Minitest::Test
-        include RatatuiRuby::TestHelper
+    "stateful" => <<~RUST,
+      use ratatui::widgets::{List, ListItem, ListState, Block};
+      use ratatui::style::{Style, Stylize};
 
-        def test_renders_title
-          with_test_terminal(40, 10) do
-            RatatuiRuby.draw { |frame| MyApp.new.render(frame) }
-            assert_includes buffer_content[0], "My App"
-          end
-        end
+      struct App {
+          items: Vec<String>,
+          state: ListState,
+      }
 
-        def test_handles_quit
-          with_test_terminal do
-            app = MyApp.new
-            inject_event("key", { code: "q" })
-            app.handle_event(RatatuiRuby.poll_event)
-            refute app.running?
-          end
-        end
-      end
-    RUBY
+      impl App {
+          fn new(items: Vec<String>) -> Self {
+              Self {
+                  items,
+                  state: ListState::default().with_selected(Some(0)),
+              }
+          }
 
-    "inline" => <<~RUBY,
-      # Preserves terminal scrollback, ideal for CLI tools
-      RatatuiRuby.run(viewport: :inline, height: 5) do |tui|
-        3.times do |i|
-          tui.draw do |frame|
-            frame.render_widget(
-              tui.paragraph(text: "Processing... \#{i + 1}/3"),
-              frame.area
-            )
-          end
-          sleep 0.5
-        end
-      end
-      # Terminal restored, output preserved above
-      puts "Done!"
-    RUBY
+          fn render(&mut self, frame: &mut Frame) {
+              let items: Vec<ListItem> = self.items
+                  .iter()
+                  .map(|i| ListItem::new(i.as_str()))
+                  .collect();
 
-    "mouse" => <<~RUBY,
-      case tui.poll_event
-      in { type: :mouse, kind: "down", x:, y:, button: "left" }
-        handle_click(x, y)
-      in { type: :mouse, kind: "drag", x:, y: }
-        handle_drag(x, y)
-      in { type: :mouse, kind: "scroll_up" }
-        scroll_up
-      in { type: :mouse, kind: "scroll_down" }
-        scroll_down
-      end
+              let list = List::new(items)
+                  .highlight_style(Style::new().reversed())
+                  .highlight_symbol(">> ")
+                  .block(Block::bordered().title("Items"));
 
-      # Or use predicates
-      if event.mouse?
-        if event.down? && event.button == "left"
-          handle_click(event.x, event.y)
-        end
-      end
-    RUBY
+              frame.render_stateful_widget(list, frame.area(), &mut self.state);
+          }
 
-    "style" => <<~RUBY
-      # Named colors
-      Style.new(fg: :red, bg: :black)
-      Style.new(fg: :light_blue, bg: :dark_gray)
+          fn next(&mut self) {
+              self.state.select_next();
+          }
 
-      # Available: :black, :red, :green, :yellow, :blue, :magenta, :cyan, :gray, :white
-      #            :dark_gray, :light_red, :light_green, :light_yellow, :light_blue, :light_magenta, :light_cyan
+          fn previous(&mut self) {
+              self.state.select_previous();
+          }
 
-      # Hex colors
-      Style.new(fg: "#ff5500", bg: "#1a1a1a")
+          fn selected(&self) -> Option<&String> {
+              self.state.selected().and_then(|i| self.items.get(i))
+          }
+      }
+    RUST
 
-      # 256-color palette
-      Style.new(fg: 196, bg: 232)
+    "custom-widget" => <<~RUST,
+      use ratatui::{
+          buffer::Buffer,
+          layout::Rect,
+          style::{Color, Style},
+          widgets::Widget,
+      };
 
-      # Modifiers
-      Style.new(modifiers: [:bold, :italic, :underlined, :reversed, :dim])
+      struct ProgressBar {
+          ratio: f64,
+          style: Style,
+      }
 
-      # Combined
-      Style.new(fg: :green, bg: :black, modifiers: [:bold, :underlined])
-    RUBY
+      impl ProgressBar {
+          fn new(ratio: f64) -> Self {
+              Self {
+                  ratio: ratio.clamp(0.0, 1.0),
+                  style: Style::new().fg(Color::Green),
+              }
+          }
+
+          fn style(mut self, style: Style) -> Self {
+              self.style = style;
+              self
+          }
+      }
+
+      impl Widget for ProgressBar {
+          fn render(self, area: Rect, buf: &mut Buffer) {
+              let filled = (area.width as f64 * self.ratio) as u16;
+
+              for x in 0..filled {
+                  buf.get_mut(area.x + x, area.y)
+                      .set_char('█')
+                      .set_style(self.style);
+              }
+
+              for x in filled..area.width {
+                  buf.get_mut(area.x + x, area.y)
+                      .set_char('░')
+                      .set_style(Style::new().fg(Color::DarkGray));
+              }
+          }
+      }
+
+      // Usage:
+      frame.render_widget(ProgressBar::new(0.75), area);
+    RUST
+
+    "testing" => <<~RUST,
+      use ratatui::{backend::TestBackend, Terminal, widgets::Paragraph};
+
+      #[cfg(test)]
+      mod tests {
+          use super::*;
+
+          fn buffer_contains(buffer: &ratatui::buffer::Buffer, text: &str) -> bool {
+              let content: String = buffer
+                  .content()
+                  .iter()
+                  .map(|cell| cell.symbol())
+                  .collect();
+              content.contains(text)
+          }
+
+          #[test]
+          fn test_renders_title() {
+              let backend = TestBackend::new(40, 10);
+              let mut terminal = Terminal::new(backend).unwrap();
+
+              terminal.draw(|frame| {
+                  frame.render_widget(
+                      Paragraph::new("My App"),
+                      frame.area(),
+                  );
+              }).unwrap();
+
+              let buffer = terminal.backend().buffer();
+              assert!(buffer_contains(buffer, "My App"));
+          }
+
+          #[test]
+          fn test_handles_quit() {
+              use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+              let mut app = App::new();
+              let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
+
+              let should_continue = app.handle_key(key);
+              assert!(!should_continue);
+          }
+      }
+    RUST
+
+    "mouse" => <<~RUST,
+      use ratatui::crossterm::event::{
+          Event, MouseEvent, MouseEventKind, MouseButton,
+      };
+
+      fn handle_events(&mut self) -> std::io::Result<()> {
+          match event::read()? {
+              Event::Mouse(mouse) => match mouse.kind {
+                  MouseEventKind::Down(MouseButton::Left) => {
+                      self.handle_click(mouse.column, mouse.row);
+                  }
+                  MouseEventKind::Drag(MouseButton::Left) => {
+                      self.handle_drag(mouse.column, mouse.row);
+                  }
+                  MouseEventKind::ScrollUp => {
+                      self.scroll_up();
+                  }
+                  MouseEventKind::ScrollDown => {
+                      self.scroll_down();
+                  }
+                  _ => {}
+              }
+              _ => {}
+          }
+          Ok(())
+      }
+
+      // Enable mouse capture in terminal setup:
+      fn setup_terminal() -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {
+          enable_raw_mode()?;
+          let mut stdout = std::io::stdout();
+          execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+          let backend = CrosstermBackend::new(stdout);
+          Terminal::new(backend)
+      }
+
+      fn restore_terminal() -> std::io::Result<()> {
+          disable_raw_mode()?;
+          execute!(
+              std::io::stdout(),
+              LeaveAlternateScreen,
+              DisableMouseCapture
+          )?;
+          Ok(())
+      }
+    RUST
+
+    "style" => <<~RUST
+      use ratatui::style::{Color, Modifier, Style, Stylize};
+
+      // Named colors
+      let style = Style::new().fg(Color::Red).bg(Color::Black);
+      let style = Style::new().fg(Color::LightBlue).bg(Color::DarkGray);
+
+      // Available colors:
+      // Color::Black, Red, Green, Yellow, Blue, Magenta, Cyan, Gray, White
+      // Color::DarkGray, LightRed, LightGreen, LightYellow, LightBlue, LightMagenta, LightCyan
+
+      // RGB colors
+      let style = Style::new()
+          .fg(Color::Rgb(255, 85, 0))
+          .bg(Color::Rgb(26, 26, 26));
+
+      // 256-color palette
+      let style = Style::new()
+          .fg(Color::Indexed(196))  // Bright red
+          .bg(Color::Indexed(232)); // Near black
+
+      // Modifiers
+      let style = Style::new()
+          .add_modifier(Modifier::BOLD)
+          .add_modifier(Modifier::ITALIC)
+          .add_modifier(Modifier::UNDERLINED)
+          .add_modifier(Modifier::REVERSED)
+          .add_modifier(Modifier::DIM);
+
+      // Shorthand with Stylize trait
+      let style = Style::new().green().bold().on_black();
+      let style = Style::new().red().italic().underlined();
+
+      // Combined
+      let style = Style::new()
+          .fg(Color::Green)
+          .bg(Color::Black)
+          .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    RUST
   }.freeze
 
   def execute
@@ -243,7 +392,9 @@ class RatatuiExample < Claude::Generator
     section "#{name} pattern"
     info PATTERNS[name]
     puts
+    puts "```rust"
     puts EXAMPLES[name]
+    puts "```"
   end
 end
 

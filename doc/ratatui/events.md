@@ -1,185 +1,216 @@
-# RatatuiRuby Events
+# Ratatui Events
 
-## Polling Events
+Event handling with crossterm.
 
-```ruby
-event = RatatuiRuby.poll_event
+## Reading Events
 
-# Or via tui object
-event = tui.poll_event
-```
+```rust
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use std::time::Duration;
 
-### Timeout Modes
+// Blocking read
+if let Event::Key(key) = event::read()? {
+    // Handle key
+}
 
-```ruby
-# Default: ~60 FPS (0.016s timeout)
-event = poll_event
-
-# Blocking: wait forever
-event = poll_event(timeout: nil)
-
-# Non-blocking: return immediately
-event = poll_event(timeout: 0.0)
-
-# Custom timeout (seconds)
-event = poll_event(timeout: 0.5)
+// Non-blocking with poll
+if event::poll(Duration::from_millis(100))? {
+    match event::read()? {
+        Event::Key(key) => handle_key(key),
+        Event::Mouse(mouse) => handle_mouse(mouse),
+        Event::Resize(w, h) => handle_resize(w, h),
+        _ => {}
+    }
+}
 ```
 
 ---
 
 ## Event Types
 
-| Class | Discriminator | Attributes |
-|-------|---------------|------------|
-| `Event::Key` | `:key` | `code`, `modifiers` |
-| `Event::Mouse` | `:mouse` | `kind`, `x`, `y`, `button`, `modifiers` |
-| `Event::Resize` | `:resize` | `width`, `height` |
-| `Event::Paste` | `:paste` | `content` |
-| `Event::FocusGained` | `:focus_gained` | (none) |
-| `Event::FocusLost` | `:focus_lost` | (none) |
-| `Event::None` | `:none` | (none) |
+| Variant | Description |
+|---------|-------------|
+| `Event::Key(KeyEvent)` | Keyboard input |
+| `Event::Mouse(MouseEvent)` | Mouse input |
+| `Event::Resize(u16, u16)` | Terminal resized |
+| `Event::Paste(String)` | Bracketed paste |
+| `Event::FocusGained` | Terminal gained focus |
+| `Event::FocusLost` | Terminal lost focus |
 
 ---
 
 ## Handling Keys
 
-### Simple Comparison
+### KeyEvent Fields
 
-```ruby
-if event == "q"
-  break
-end
-
-if event == :enter
-  submit_form
-end
-
-if event == :ctrl_c
-  break
-end
+```rust
+pub struct KeyEvent {
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
+    pub kind: KeyEventKind,  // Press, Release, Repeat
+    pub state: KeyEventState,
+}
 ```
 
-### Supported Symbols
+### KeyCode Variants
 
-```ruby
-# Special keys
-:enter, :esc, :tab, :backspace, :delete
-:up, :down, :left, :right
-:home, :end, :page_up, :page_down
-:insert, :f1, :f2, ... :f12
+```rust
+// Characters
+KeyCode::Char('a')
+KeyCode::Char('A')  // Shift+a
 
-# Modifier combos
-:ctrl_c, :ctrl_s, :ctrl_z
-:alt_enter, :shift_tab
+// Special keys
+KeyCode::Enter
+KeyCode::Esc
+KeyCode::Tab
+KeyCode::Backspace
+KeyCode::Delete
+KeyCode::Insert
+
+// Navigation
+KeyCode::Up
+KeyCode::Down
+KeyCode::Left
+KeyCode::Right
+KeyCode::Home
+KeyCode::End
+KeyCode::PageUp
+KeyCode::PageDown
+
+// Function keys
+KeyCode::F(1)  // F1-F12
 ```
 
-### Predicate Methods
+### Modifiers
 
-```ruby
-if event.key?
-  if event.ctrl? && event.code == "s"
-    save_file
-  end
-end
+```rust
+KeyModifiers::CONTROL
+KeyModifiers::SHIFT
+KeyModifiers::ALT
+KeyModifiers::SUPER  // Cmd on macOS
+KeyModifiers::HYPER
+KeyModifiers::META
+KeyModifiers::NONE
 
-event.text?     # Printable character?
-event.ctrl?     # Ctrl held?
-event.alt?      # Alt held?
-event.shift?    # Shift held?
+// Check modifiers
+if key.modifiers.contains(KeyModifiers::CONTROL) {
+    // Ctrl held
+}
 ```
 
 ### Pattern Matching
 
-```ruby
-case poll_event
-in type: :key, code: "q"
-  break
+```rust
+match event::read()? {
+    Event::Key(KeyEvent { code, modifiers, .. }) => {
+        match (modifiers, code) {
+            // Quit
+            (_, KeyCode::Char('q')) => return Ok(()),
+            (KeyModifiers::CONTROL, KeyCode::Char('c')) => return Ok(()),
 
-in type: :key, code: "c", modifiers: ["ctrl"]
-  break
+            // Navigation
+            (_, KeyCode::Up | KeyCode::Char('k')) => self.previous(),
+            (_, KeyCode::Down | KeyCode::Char('j')) => self.next(),
+            (_, KeyCode::Home | KeyCode::Char('g')) => self.first(),
+            (_, KeyCode::End | KeyCode::Char('G')) => self.last(),
 
-in type: :key, code: "up" | "k"
-  move_up
+            // Page navigation
+            (KeyModifiers::CONTROL, KeyCode::Char('u')) => self.page_up(),
+            (KeyModifiers::CONTROL, KeyCode::Char('d')) => self.page_down(),
 
-in type: :key, code: "down" | "j"
-  move_down
+            // Select
+            (_, KeyCode::Enter) => self.select(),
 
-in type: :key, code: /^[a-z]$/ => char
-  handle_char(char)
+            // Search
+            (_, KeyCode::Char('/')) => self.start_search(),
 
-in type: :none
-  # No event, continue loop
-end
+            // Text input
+            (_, KeyCode::Char(c)) => self.input(c),
+            (_, KeyCode::Backspace) => self.backspace(),
+
+            _ => {}
+        }
+    }
+    _ => {}
+}
 ```
 
 ---
 
 ## Handling Mouse
 
-```ruby
-case poll_event
-in type: :mouse, kind: "down", x:, y:, button: "left"
-  handle_click(x, y)
+Enable mouse capture:
 
-in type: :mouse, kind: "drag", x:, y:
-  handle_drag(x, y)
+```rust
+use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
+use crossterm::execute;
 
-in type: :mouse, kind: "scroll_up"
-  scroll_up
+// On init
+execute!(stdout, EnableMouseCapture)?;
 
-in type: :mouse, kind: "scroll_down"
-  scroll_down
-end
+// On restore
+execute!(stdout, DisableMouseCapture)?;
 ```
 
-### Mouse Predicates
+### MouseEvent
 
-```ruby
-if event.mouse?
-  event.down?         # Button pressed
-  event.up?           # Button released
-  event.drag?         # Dragging
-  event.scroll_up?
-  event.scroll_down?
-  event.x             # Column
-  event.y             # Row
-  event.button        # "left", "right", "middle"
-end
+```rust
+use crossterm::event::{MouseEvent, MouseEventKind, MouseButton};
+
+match event::read()? {
+    Event::Mouse(MouseEvent { kind, column, row, modifiers }) => {
+        match kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                handle_click(column, row);
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                show_context_menu(column, row);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                handle_drag(column, row);
+            }
+            MouseEventKind::ScrollUp => scroll_up(),
+            MouseEventKind::ScrollDown => scroll_down(),
+            MouseEventKind::Moved => {
+                // Mouse moved (if tracking enabled)
+            }
+            _ => {}
+        }
+    }
+    _ => {}
+}
+```
+
+### Click Detection
+
+```rust
+fn clicked_in_area(x: u16, y: u16, area: Rect) -> bool {
+    area.contains(Position::new(x, y))
+}
+
+// In list
+fn clicked_item(&self, y: u16, area: Rect) -> Option<usize> {
+    if y < area.y || y >= area.y + area.height {
+        return None;
+    }
+    let index = (y - area.y) as usize + self.scroll_offset;
+    if index < self.items.len() {
+        Some(index)
+    } else {
+        None
+    }
+}
 ```
 
 ---
 
 ## Handling Resize
 
-```ruby
-in type: :resize, width:, height:
-  @terminal_size = [width, height]
-  redraw_layout
-```
-
----
-
-## Handling Paste
-
-```ruby
-in type: :paste, content:
-  @input_buffer += content
-```
-
----
-
-## Polymorphic Predicates
-
-Safe to call on any event:
-
-```ruby
-event.key?           # Is this a key event?
-event.mouse?         # Is this a mouse event?
-event.resize?        # Is this a resize event?
-event.paste?         # Is this a paste event?
-event.focus_gained?
-event.focus_lost?
-event.none?          # No event (timeout)
+```rust
+Event::Resize(width, height) => {
+    self.terminal_size = (width, height);
+    // Layout will adapt on next draw
+}
 ```
 
 ---
@@ -188,58 +219,67 @@ event.none?          # No event (timeout)
 
 ### Basic Loop
 
-```ruby
-loop do
-  tui.draw { |frame| render(frame) }
+```rust
+fn run(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    while self.running {
+        terminal.draw(|frame| self.render(frame))?;
+        self.handle_events()?;
+    }
+    Ok(())
+}
 
-  case tui.poll_event
-  in { type: :key, code: "q" }
-    break
-  in { type: :key, code: "up" }
-    @cursor -= 1
-  in { type: :key, code: "down" }
-    @cursor += 1
-  else
-    nil
-  end
-end
+fn handle_events(&mut self) -> std::io::Result<()> {
+    if event::poll(Duration::from_millis(100))? {
+        if let Event::Key(key) = event::read()? {
+            match key.code {
+                KeyCode::Char('q') => self.running = false,
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
 ```
 
 ### Blocking (Low CPU)
 
-```ruby
-loop do
-  tui.draw { |frame| render(frame) }
-
-  # Wait indefinitely for input (0% CPU when idle)
-  event = tui.poll_event(timeout: nil)
-
-  break if event == "q"
-  handle_event(event)
-end
+```rust
+// Block until event (0% CPU when idle)
+match event::read()? {
+    Event::Key(key) => handle_key(key),
+    Event::Resize(_, _) => {} // Will redraw on next iteration
+    _ => {}
+}
 ```
 
-### With Animations
+### With Tick Rate (Animations)
 
-```ruby
-loop do
-  @frame_count += 1
-  tui.draw { |frame| render_with_animation(frame) }
+```rust
+use std::time::{Duration, Instant};
 
-  # Short timeout for smooth animation
-  case tui.poll_event(timeout: 0.033)  # ~30 FPS
-  in { type: :key, code: "q" }
-    break
-  else
-    nil
-  end
-end
+let tick_rate = Duration::from_millis(33);  // ~30 FPS
+let mut last_tick = Instant::now();
+
+loop {
+    let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+
+    if event::poll(timeout)? {
+        // Handle event
+    }
+
+    if last_tick.elapsed() >= tick_rate {
+        self.tick();  // Update animations
+        last_tick = Instant::now();
+    }
+
+    terminal.draw(|frame| self.render(frame))?;
+}
 ```
 
 ---
 
 ## macOS Notes
 
-- **Option key** maps to `alt`
+- **Option key** maps to `ALT`
 - **Command key** is usually intercepted by terminal emulator
-- Some terminals map Command to Meta/Alt — check your terminal settings
+- Some terminals map Command to Meta — check terminal settings

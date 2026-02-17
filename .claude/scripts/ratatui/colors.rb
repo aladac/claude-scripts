@@ -70,7 +70,7 @@ class RatatuiColors < Claude::Generator
   private
 
   def show_all
-    section "RatatuiRuby Colors"
+    section "Ratatui Colors"
 
     show_named
     puts
@@ -91,7 +91,12 @@ class RatatuiColors < Claude::Generator
       end
     end
     puts
-    info "Usage: Style.new(fg: :red, bg: :black)"
+    info "Usage:"
+    puts "```rust"
+    puts "use ratatui::style::{Color, Style};"
+    puts ""
+    puts "Style::new().fg(Color::Red).bg(Color::Black)"
+    puts "```"
   end
 
   def show_256_summary
@@ -102,7 +107,10 @@ class RatatuiColors < Claude::Generator
       puts
     end
     puts
-    info "Usage: Style.new(fg: 196)  # bright red"
+    info "Usage:"
+    puts "```rust"
+    puts "Style::new().fg(Color::Indexed(196))  // Bright red"
+    puts "```"
     info "Run /ratatui:colors 256 for full palette"
   end
 
@@ -172,16 +180,32 @@ class RatatuiColors < Claude::Generator
 
     puts
     bold "Usage:"
-    puts <<~RUBY
-      COLORS = {
-        bg: "#{colors[:bg]}",
-        fg: "#{colors[:fg]}",
-        red: "#{colors[:red]}",
-        green: "#{colors[:green]}"
+    puts <<~RUST
+      ```rust
+      use ratatui::style::{Color, Style};
+
+      struct Colors {
+          bg: Color,
+          fg: Color,
+          red: Color,
+          green: Color,
       }
 
-      Style.new(fg: COLORS[:red], bg: COLORS[:bg])
-    RUBY
+      impl Colors {
+          fn #{name.tr('-', '_')}() -> Self {
+              Self {
+                  bg: Color::Rgb(#{hex_to_rgb(colors[:bg]).join(', ')}),
+                  fg: Color::Rgb(#{hex_to_rgb(colors[:fg]).join(', ')}),
+                  red: Color::Rgb(#{hex_to_rgb(colors[:red]).join(', ')}),
+                  green: Color::Rgb(#{hex_to_rgb(colors[:green]).join(', ')}),
+              }
+          }
+      }
+
+      let colors = Colors::#{name.tr('-', '_')}();
+      let style = Style::new().fg(colors.red).bg(colors.bg);
+      ```
+    RUST
   end
 
   def color_code(sym)

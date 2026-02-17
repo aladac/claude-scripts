@@ -4,177 +4,239 @@
 require_relative "../../../ruby/generator"
 
 class RatatuiWidget < Claude::Generator
-  METADATA = { name: "ratatui:widget", desc: "Quick widget reference" }.freeze
+  METADATA = { name: "ratatui:widget", desc: "Widget quick reference" }.freeze
 
   WIDGETS = {
     "paragraph" => {
       desc: "Display text with alignment and wrapping",
-      opts: "text:, style:, alignment:, wrap:, scroll:, block:",
-      example: <<~RUBY
-        Paragraph.new(
-          text: "Hello, World!",
-          style: Style.new(fg: :green),
-          alignment: :center,
-          wrap: true,
-          block: Block.new(title: "Output", borders: [:all])
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::{Paragraph, Block, Wrap};
+        use ratatui::style::Style;
+        use ratatui::layout::Alignment;
+
+        Paragraph::new("Hello, World!")
+            .style(Style::new().fg(Color::Green))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title("Output"))
+      RUST
     },
     "list" => {
       desc: "Selectable list with navigation",
-      opts: "items:, selected_index:, highlight_style:, highlight_symbol:, direction:, scroll_padding:, block:",
-      example: <<~RUBY
-        List.new(
-          items: ["Item 1", "Item 2", "Item 3"],
-          selected_index: 0,
-          highlight_style: Style.new(modifiers: [:reversed]),
-          highlight_symbol: ">> ",
-          block: Block.new(title: "Menu", borders: [:all])
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::{List, ListItem, ListState, Block};
+        use ratatui::style::Style;
+
+        let items = vec![
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+            ListItem::new("Item 3"),
+        ];
+
+        let list = List::new(items)
+            .highlight_style(Style::new().reversed())
+            .highlight_symbol(">> ")
+            .block(Block::bordered().title("Menu"));
+
+        // Render with state
+        let mut state = ListState::default().with_selected(Some(0));
+        frame.render_stateful_widget(list, area, &mut state);
+
+        // Navigation
+        state.select_next();
+        state.select_previous();
+      RUST
     },
     "table" => {
       desc: "Structured data in rows and columns",
-      opts: "header:, rows:, widths:, selected_row:, row_highlight_style:, column_spacing:, block:",
-      example: <<~RUBY
-        Table.new(
-          header: ["Name", "Status", "Port"],
-          rows: [["api", "running", "8080"], ["worker", "stopped", "-"]],
-          widths: [Constraint.percentage(40), Constraint.percentage(30), Constraint.percentage(30)],
-          selected_row: 0,
-          row_highlight_style: Style.new(modifiers: [:reversed])
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::{Table, Row, Cell, TableState, Block};
+        use ratatui::layout::Constraint;
+        use ratatui::style::Style;
+
+        let header = Row::new(vec!["Name", "Status", "Port"])
+            .style(Style::new().bold())
+            .bottom_margin(1);
+
+        let rows = vec![
+            Row::new(vec!["api", "running", "8080"]),
+            Row::new(vec!["worker", "stopped", "-"]),
+        ];
+
+        let widths = [
+            Constraint::Percentage(40),
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
+        ];
+
+        let table = Table::new(rows, widths)
+            .header(header)
+            .row_highlight_style(Style::new().reversed())
+            .block(Block::bordered().title("Services"));
+
+        let mut state = TableState::default().with_selected(Some(0));
+        frame.render_stateful_widget(table, area, &mut state);
+      RUST
     },
     "block" => {
       desc: "Container with borders and title",
-      opts: "title:, borders:, border_style:, border_type:, title_position:, title_alignment:",
-      example: <<~RUBY
-        Block.new(
-          title: "Dashboard",
-          borders: [:all],
-          border_type: :rounded,
-          border_style: Style.new(fg: :cyan)
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::{Block, Borders, BorderType};
+        use ratatui::style::Style;
+        use ratatui::layout::Alignment;
+
+        Block::new()
+            .title("Dashboard")
+            .borders(Borders::ALL)
+            .border_style(Style::new().fg(Color::Cyan))
+            .border_type(BorderType::Rounded)
+            .title_alignment(Alignment::Center)
+
+        // Shorthand
+        Block::bordered().title("Title")
+
+        // Get inner area
+        let inner = block.inner(area);
+      RUST
     },
     "gauge" => {
       desc: "Progress indicator",
-      opts: "ratio:, label:, style:, gauge_style:, block:",
-      example: <<~RUBY
-        Gauge.new(
-          ratio: 0.75,
-          label: "75%",
-          gauge_style: Style.new(bg: :green),
-          block: Block.new(title: "Progress", borders: [:all])
-        )
-      RUBY
-    },
-    "linegauge" => {
-      desc: "Horizontal line progress",
-      opts: "ratio:, label:, line_set:, filled_style:, unfilled_style:",
-      example: <<~RUBY
-        LineGauge.new(
-          ratio: 0.5,
-          label: "Loading...",
-          line_set: :thick,
-          filled_style: Style.new(fg: :blue)
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::{Gauge, Block};
+        use ratatui::style::Style;
+
+        Gauge::default()
+            .ratio(0.75)  // 0.0 to 1.0
+            .label("75%")
+            .gauge_style(Style::new().fg(Color::Green))
+            .block(Block::bordered().title("Progress"))
+      RUST
     },
     "tabs" => {
-      desc: "Tab bar",
-      opts: "titles:, selected:, style:, highlight_style:, divider:, block:",
-      example: <<~RUBY
-        Tabs.new(
-          titles: ["Home", "Settings", "Help"],
-          selected: 0,
-          highlight_style: Style.new(fg: :yellow, modifiers: [:bold]),
-          divider: " | "
-        )
-      RUBY
+      desc: "Tab bar for navigation",
+      example: <<~RUST
+        use ratatui::widgets::{Tabs, Block, Borders};
+        use ratatui::style::Style;
+
+        Tabs::new(vec!["Home", "Settings", "Help"])
+            .select(0)
+            .style(Style::new().fg(Color::White))
+            .highlight_style(Style::new().fg(Color::Yellow).bold())
+            .divider(" | ")
+            .block(Block::default().borders(Borders::BOTTOM))
+      RUST
     },
     "sparkline" => {
       desc: "Mini chart for data series",
-      opts: "data:, style:, direction:, block:",
-      example: <<~RUBY
-        Sparkline.new(
-          data: [1, 4, 2, 8, 5, 7, 3],
-          style: Style.new(fg: :cyan),
-          direction: :left_to_right
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::{Sparkline, Block, RenderDirection};
+        use ratatui::style::Style;
+
+        Sparkline::default()
+            .data(&[1, 4, 2, 8, 5, 7, 3])
+            .style(Style::new().fg(Color::Cyan))
+            .direction(RenderDirection::LeftToRight)
+            .block(Block::bordered())
+      RUST
     },
     "scrollbar" => {
       desc: "Scroll indicator",
-      opts: "orientation:, thumb_style:, track_style:, begin_symbol:, end_symbol:",
-      example: <<~RUBY
-        Scrollbar.new(
-          orientation: :vertical,
-          thumb_style: Style.new(fg: :cyan),
-          track_style: Style.new(fg: :dark_gray)
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+        use ratatui::style::Style;
+
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .thumb_style(Style::new().fg(Color::Cyan))
+            .track_style(Style::new().fg(Color::DarkGray));
+
+        let mut state = ScrollbarState::new(100).position(25);
+        frame.render_stateful_widget(scrollbar, area, &mut state);
+      RUST
     },
     "canvas" => {
       desc: "Low-level drawing surface",
-      opts: "x_bounds:, y_bounds:, marker:, paint:",
-      example: <<~RUBY
-        Canvas.new(
-          x_bounds: [0.0, 100.0],
-          y_bounds: [0.0, 100.0],
-          marker: :braille,
-          paint: ->(ctx) {
-            ctx.draw(Line.new(x1: 0, y1: 0, x2: 100, y2: 100, color: :red))
-          }
-        )
-      RUBY
+      example: <<~RUST
+        use ratatui::widgets::canvas::{Canvas, Line, Circle};
+        use ratatui::symbols::Marker;
+
+        Canvas::default()
+            .x_bounds([0.0, 100.0])
+            .y_bounds([0.0, 100.0])
+            .marker(Marker::Braille)
+            .paint(|ctx| {
+                ctx.draw(&Line {
+                    x1: 0.0, y1: 0.0,
+                    x2: 100.0, y2: 100.0,
+                    color: Color::Red,
+                });
+                ctx.draw(&Circle {
+                    x: 50.0, y: 50.0,
+                    radius: 20.0,
+                    color: Color::Blue,
+                });
+            })
+      RUST
+    },
+    "barchart" => {
+      desc: "Vertical/horizontal bar chart",
+      example: <<~RUST
+        use ratatui::widgets::{BarChart, Bar, BarGroup};
+        use ratatui::style::Style;
+
+        let data = BarGroup::default().bars(&[
+            Bar::default().value(10).label("Mon".into()),
+            Bar::default().value(20).label("Tue".into()),
+            Bar::default().value(15).label("Wed".into()),
+        ]);
+
+        BarChart::default()
+            .data(data)
+            .bar_width(5)
+            .bar_gap(1)
+            .bar_style(Style::new().fg(Color::Blue))
+      RUST
     }
   }.freeze
 
   def execute
-    widget = args.first&.downcase
+    name = args.first&.downcase
 
-    if widget.nil? || widget.empty?
-      list_widgets
-    elsif WIDGETS.key?(widget)
-      show_widget(widget)
-    else
-      err "Unknown widget: #{widget}"
-      puts
-      list_widgets
+    if name.nil? || name.empty?
+      show_all
+      return
     end
+
+    widget = WIDGETS[name]
+    if widget.nil?
+      err "Unknown widget: #{name}"
+      puts
+      show_all
+      return
+    end
+
+    show_widget(name, widget)
   end
 
   private
 
-  def list_widgets
+  def show_all
     section "Available Widgets"
 
-    rows = WIDGETS.map do |name, info|
-      [name, info[:desc]]
-    end
-
+    rows = WIDGETS.map { |name, w| [name, w[:desc]] }
     table(%w[Widget Description], rows)
 
     puts
     info "Usage: /ratatui:widget <name>"
   end
 
-  def show_widget(name)
-    widget = WIDGETS[name]
+  def show_widget(name, widget)
     section name.capitalize
 
-    bold "Description"
-    info widget[:desc]
-
+    puts widget[:desc]
     puts
-    bold "Options"
-    info widget[:opts]
-
-    puts
-    bold "Example"
-    puts widget[:example]
+    puts "```rust"
+    puts widget[:example].strip
+    puts "```"
   end
 end
 

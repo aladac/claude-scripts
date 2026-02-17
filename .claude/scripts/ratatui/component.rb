@@ -9,475 +9,665 @@ class RatatuiComponent < Claude::Generator
   COMPONENTS = {
     "searchable_list" => {
       desc: "List with fuzzy filtering",
-      code: <<~'RUBY'
-        class SearchableList
-          attr_reader :query, :selected
+      code: <<~'RUST'
+        use ratatui::{
+            layout::{Constraint, Layout, Rect},
+            style::{Color, Style, Stylize},
+            widgets::{Block, List, ListItem, ListState, Paragraph},
+            Frame,
+        };
 
-          def initialize(items)
-            @all_items = items
-            @query = ""
-            @list_state = RatatuiRuby::State::ListState.new
-            @list_state.select(0)
-          end
+        struct SearchableList {
+            all_items: Vec<String>,
+            query: String,
+            state: ListState,
+        }
 
-          def filtered_items
-            return @all_items if @query.empty?
-            pattern = @query.chars.join(".*")
-            @all_items.select { |item| item.to_s.match?(/#{pattern}/i) }
-          end
+        impl SearchableList {
+            fn new(items: Vec<String>) -> Self {
+                Self {
+                    all_items: items,
+                    query: String::new(),
+                    state: ListState::default().with_selected(Some(0)),
+                }
+            }
 
-          def handle_event(event)
-            case event
-            in { type: :key, code: "up" | "k" }
-              @list_state.select_previous
-            in { type: :key, code: "down" | "j" }
-              @list_state.select_next
-            in { type: :key, code: "backspace" }
-              @query = @query[0..-2]
-              @list_state.select_first
-            in { type: :key, code: c } if c.is_a?(String) && c.match?(/^[a-zA-Z0-9 ]$/)
-              @query += c
-              @list_state.select_first
-            else
-              nil
-            end
-          end
+            fn filtered_items(&self) -> Vec<&String> {
+                if self.query.is_empty() {
+                    self.all_items.iter().collect()
+                } else {
+                    let query_lower = self.query.to_lowercase();
+                    self.all_items
+                        .iter()
+                        .filter(|item| {
+                            let item_lower = item.to_lowercase();
+                            // Simple fuzzy: check if all query chars appear in order
+                            let mut chars = query_lower.chars().peekable();
+                            for c in item_lower.chars() {
+                                if chars.peek() == Some(&c) {
+                                    chars.next();
+                                }
+                            }
+                            chars.peek().is_none()
+                        })
+                        .collect()
+                }
+            }
 
-          def selected_item
-            items = filtered_items
-            idx = @list_state.selected || 0
-            items[idx] if idx < items.size
-          end
+            fn handle_key(&mut self, key: KeyEvent) {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => self.state.select_previous(),
+                    KeyCode::Down | KeyCode::Char('j') => self.state.select_next(),
+                    KeyCode::Backspace => {
+                        self.query.pop();
+                        self.state.select_first();
+                    }
+                    KeyCode::Char(c) if c.is_alphanumeric() || c == ' ' => {
+                        self.query.push(c);
+                        self.state.select_first();
+                    }
+                    _ => {}
+                }
+            }
 
-          def render(frame, tui, area)
-            items = filtered_items
+            fn selected_item(&self) -> Option<&String> {
+                let items = self.filtered_items();
+                self.state.selected().and_then(|i| items.get(i).copied())
+            }
 
-            # Split: search bar + list
-            areas = tui.layout_split(area, direction: :vertical, constraints: [
-              tui.constraint_length(3),
-              tui.constraint_fill(1)
-            ])
+            fn render(&mut self, frame: &mut Frame, area: Rect) {
+                let items = self.filtered_items();
 
-            # Search bar
-            search_text = @query.empty? ? "Type to filter..." : @query
-            search_style = @query.empty? ? tui.style(fg: :dark_gray) : tui.style(fg: :white)
-            frame.render_widget(
-              tui.paragraph(
-                text: "🔍 #{search_text}",
-                style: search_style,
-                block: tui.block(borders: [:all])
-              ),
-              areas[0]
-            )
+                let [search_area, list_area] = Layout::vertical([
+                    Constraint::Length(3),
+                    Constraint::Fill(1),
+                ]).areas(area);
 
-            # List
-            list = tui.list(
-              items: items,
-              highlight_style: tui.style(modifiers: [:reversed]),
-              highlight_symbol: "› ",
-              block: tui.block(title: "#{items.size} items", borders: [:all])
-            )
-            frame.render_stateful_widget(list, areas[1], @list_state)
-          end
-        end
+                // Search bar
+                let search_text = if self.query.is_empty() {
+                    "Type to filter...".to_string()
+                } else {
+                    self.query.clone()
+                };
+                let search_style = if self.query.is_empty() {
+                    Style::new().fg(Color::DarkGray)
+                } else {
+                    Style::new().fg(Color::White)
+                };
 
-        # Usage:
-        @search_list = SearchableList.new(%w[Apple Banana Cherry Date Elderberry])
+                frame.render_widget(
+                    Paragraph::new(format!("🔍 {}", search_text))
+                        .style(search_style)
+                        .block(Block::bordered()),
+                    search_area,
+                );
 
-        # In event loop:
-        @search_list.handle_event(event)
-        @search_list.render(frame, tui, area)
+                // List
+                let list_items: Vec<ListItem> = items
+                    .iter()
+                    .map(|i| ListItem::new(i.as_str()))
+                    .collect();
 
-        # On Enter:
-        selected = @search_list.selected_item
-      RUBY
+                let list = List::new(list_items)
+                    .highlight_style(Style::new().reversed())
+                    .highlight_symbol("› ")
+                    .block(Block::bordered().title(format!("{} items", items.len())));
+
+                frame.render_stateful_widget(list, list_area, &mut self.state);
+            }
+        }
+
+        // Usage:
+        // let mut search_list = SearchableList::new(vec![
+        //     "Apple".into(), "Banana".into(), "Cherry".into(),
+        // ]);
+        // search_list.handle_key(key);
+        // search_list.render(frame, area);
+        // if let Some(selected) = search_list.selected_item() { ... }
+      RUST
     },
     "file_tree" => {
       desc: "Directory tree browser",
-      code: <<~'RUBY'
-        class FileTree
-          Node = Data.define(:path, :name, :directory?, :depth, :expanded)
+      code: <<~'RUST'
+        use std::collections::HashSet;
+        use std::path::{Path, PathBuf};
+        use ratatui::{
+            layout::Rect,
+            style::{Style, Stylize},
+            widgets::{Block, List, ListItem, ListState},
+            Frame,
+        };
 
-          def initialize(root)
-            @root = File.expand_path(root)
-            @expanded = Set.new([@root])
-            @list_state = RatatuiRuby::State::ListState.new
-            @list_state.select(0)
-          end
+        struct FileNode {
+            path: PathBuf,
+            name: String,
+            is_dir: bool,
+            depth: usize,
+            expanded: bool,
+        }
 
-          def nodes
-            build_tree(@root, 0)
-          end
+        struct FileTree {
+            root: PathBuf,
+            expanded: HashSet<PathBuf>,
+            state: ListState,
+        }
 
-          def build_tree(dir, depth)
-            result = []
-            entries = Dir.entries(dir).reject { |e| e.start_with?(".") }.sort
-            entries.each do |name|
-              path = File.join(dir, name)
-              is_dir = File.directory?(path)
-              result << Node.new(
-                path: path,
-                name: name,
-                directory?: is_dir,
-                depth: depth,
-                expanded: @expanded.include?(path)
-              )
-              if is_dir && @expanded.include?(path)
-                result.concat(build_tree(path, depth + 1))
-              end
-            end
-            result
-          rescue Errno::EACCES
-            result
-          end
+        impl FileTree {
+            fn new(root: impl AsRef<Path>) -> Self {
+                let root = root.as_ref().to_path_buf();
+                let mut expanded = HashSet::new();
+                expanded.insert(root.clone());
+                Self {
+                    root,
+                    expanded,
+                    state: ListState::default().with_selected(Some(0)),
+                }
+            }
 
-          def handle_event(event)
-            case event
-            in { type: :key, code: "up" | "k" }
-              @list_state.select_previous
-            in { type: :key, code: "down" | "j" }
-              @list_state.select_next
-            in { type: :key, code: "enter" | "right" | "l" }
-              toggle_expand
-            in { type: :key, code: "left" | "h" }
-              collapse_current
-            else
-              nil
-            end
-          end
+            fn build_tree(&self, dir: &Path, depth: usize) -> Vec<FileNode> {
+                let mut result = Vec::new();
+                let entries = match std::fs::read_dir(dir) {
+                    Ok(e) => e,
+                    Err(_) => return result,
+                };
 
-          def toggle_expand
-            node = selected_node
-            return unless node&.directory?
-            if @expanded.include?(node.path)
-              @expanded.delete(node.path)
-            else
-              @expanded.add(node.path)
-            end
-          end
+                let mut entries: Vec<_> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+                    .collect();
+                entries.sort_by_key(|e| e.file_name());
 
-          def collapse_current
-            node = selected_node
-            return unless node
-            @expanded.delete(node.path) if node.directory?
-          end
+                for entry in entries {
+                    let path = entry.path();
+                    let is_dir = path.is_dir();
+                    let expanded = self.expanded.contains(&path);
 
-          def selected_node
-            nodes[@list_state.selected || 0]
-          end
+                    result.push(FileNode {
+                        path: path.clone(),
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                        is_dir,
+                        depth,
+                        expanded,
+                    });
 
-          def render(frame, tui, area)
-            items = nodes.map do |node|
-              indent = "  " * node.depth
-              icon = node.directory? ? (node.expanded ? "📂" : "📁") : "📄"
-              "#{indent}#{icon} #{node.name}"
-            end
+                    if is_dir && expanded {
+                        result.extend(self.build_tree(&path, depth + 1));
+                    }
+                }
+                result
+            }
 
-            list = tui.list(
-              items: items,
-              highlight_style: tui.style(modifiers: [:reversed]),
-              block: tui.block(title: @root, borders: [:all])
-            )
-            frame.render_stateful_widget(list, area, @list_state)
-          end
-        end
-      RUBY
+            fn nodes(&self) -> Vec<FileNode> {
+                self.build_tree(&self.root, 0)
+            }
+
+            fn handle_key(&mut self, key: KeyEvent) {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => self.state.select_previous(),
+                    KeyCode::Down | KeyCode::Char('j') => self.state.select_next(),
+                    KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.toggle_expand(),
+                    KeyCode::Left | KeyCode::Char('h') => self.collapse_current(),
+                    _ => {}
+                }
+            }
+
+            fn toggle_expand(&mut self) {
+                if let Some(node) = self.selected_node() {
+                    if node.is_dir {
+                        if self.expanded.contains(&node.path) {
+                            self.expanded.remove(&node.path);
+                        } else {
+                            self.expanded.insert(node.path);
+                        }
+                    }
+                }
+            }
+
+            fn collapse_current(&mut self) {
+                if let Some(node) = self.selected_node() {
+                    if node.is_dir {
+                        self.expanded.remove(&node.path);
+                    }
+                }
+            }
+
+            fn selected_node(&self) -> Option<FileNode> {
+                let nodes = self.nodes();
+                self.state.selected().and_then(|i| nodes.into_iter().nth(i))
+            }
+
+            fn render(&mut self, frame: &mut Frame, area: Rect) {
+                let nodes = self.nodes();
+                let items: Vec<ListItem> = nodes
+                    .iter()
+                    .map(|node| {
+                        let indent = "  ".repeat(node.depth);
+                        let icon = if node.is_dir {
+                            if node.expanded { "📂" } else { "📁" }
+                        } else {
+                            "📄"
+                        };
+                        ListItem::new(format!("{}{} {}", indent, icon, node.name))
+                    })
+                    .collect();
+
+                let list = List::new(items)
+                    .highlight_style(Style::new().reversed())
+                    .block(Block::bordered().title(self.root.display().to_string()));
+
+                frame.render_stateful_widget(list, area, &mut self.state);
+            }
+        }
+      RUST
     },
     "log_viewer" => {
       desc: "Scrolling log with auto-follow",
-      code: <<~'RUBY'
-        class LogViewer
-          MAX_LINES = 1000
+      code: <<~'RUST'
+        use ratatui::{
+            layout::Rect,
+            style::{Color, Style},
+            widgets::{Block, Paragraph},
+            Frame,
+        };
 
-          def initialize
-            @lines = []
-            @auto_scroll = true
-            @scroll_offset = 0
-          end
+        #[derive(Clone, Copy)]
+        enum LogLevel {
+            Info,
+            Warn,
+            Error,
+            Debug,
+        }
 
-          def add(line, level: :info)
-            timestamp = Time.now.strftime("%H:%M:%S")
-            @lines << { time: timestamp, level: level, text: line }
-            @lines.shift if @lines.size > MAX_LINES
-            @scroll_offset = [@lines.size - 1, 0].max if @auto_scroll
-          end
+        struct LogEntry {
+            time: String,
+            level: LogLevel,
+            text: String,
+        }
 
-          def info(line)  = add(line, level: :info)
-          def warn(line)  = add(line, level: :warn)
-          def error(line) = add(line, level: :error)
-          def debug(line) = add(line, level: :debug)
+        struct LogViewer {
+            lines: Vec<LogEntry>,
+            auto_scroll: bool,
+            scroll_offset: usize,
+            max_lines: usize,
+        }
 
-          def handle_event(event)
-            case event
-            in { type: :key, code: "up" | "k" }
-              @scroll_offset = [@scroll_offset - 1, 0].max
-              @auto_scroll = false
-            in { type: :key, code: "down" | "j" }
-              @scroll_offset = [@scroll_offset + 1, @lines.size - 1].min
-            in { type: :key, code: "g" }
-              @scroll_offset = 0
-              @auto_scroll = false
-            in { type: :key, code: "G" }
-              @scroll_offset = [@lines.size - 1, 0].max
-              @auto_scroll = true
-            in { type: :key, code: "f" }
-              @auto_scroll = !@auto_scroll
-            else
-              nil
-            end
-          end
+        impl LogViewer {
+            fn new() -> Self {
+                Self {
+                    lines: Vec::new(),
+                    auto_scroll: true,
+                    scroll_offset: 0,
+                    max_lines: 1000,
+                }
+            }
 
-          def render(frame, tui, area)
-            height = area.height - 2  # Account for borders
-            start_idx = [@scroll_offset - height + 1, 0].max
-            visible = @lines[start_idx, height] || []
+            fn add(&mut self, text: impl Into<String>, level: LogLevel) {
+                let time = chrono::Local::now().format("%H:%M:%S").to_string();
+                self.lines.push(LogEntry {
+                    time,
+                    level,
+                    text: text.into(),
+                });
+                if self.lines.len() > self.max_lines {
+                    self.lines.remove(0);
+                }
+                if self.auto_scroll {
+                    self.scroll_offset = self.lines.len().saturating_sub(1);
+                }
+            }
 
-            content = visible.map do |entry|
-              color = { info: :white, warn: :yellow, error: :red, debug: :dark_gray }[entry[:level]]
-              "[#{entry[:time]}] #{entry[:text]}"
-            end.join("\n")
+            fn info(&mut self, text: impl Into<String>) { self.add(text, LogLevel::Info); }
+            fn warn(&mut self, text: impl Into<String>) { self.add(text, LogLevel::Warn); }
+            fn error(&mut self, text: impl Into<String>) { self.add(text, LogLevel::Error); }
+            fn debug(&mut self, text: impl Into<String>) { self.add(text, LogLevel::Debug); }
 
-            follow_indicator = @auto_scroll ? " [FOLLOW]" : ""
-            title = "Logs (#{@lines.size} lines)#{follow_indicator}"
+            fn handle_key(&mut self, key: KeyEvent) {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                        self.auto_scroll = false;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.scroll_offset = (self.scroll_offset + 1).min(self.lines.len().saturating_sub(1));
+                    }
+                    KeyCode::Char('g') => {
+                        self.scroll_offset = 0;
+                        self.auto_scroll = false;
+                    }
+                    KeyCode::Char('G') => {
+                        self.scroll_offset = self.lines.len().saturating_sub(1);
+                        self.auto_scroll = true;
+                    }
+                    KeyCode::Char('f') => {
+                        self.auto_scroll = !self.auto_scroll;
+                    }
+                    _ => {}
+                }
+            }
 
-            frame.render_widget(
-              tui.paragraph(
-                text: content,
-                block: tui.block(title: title, borders: [:all])
-              ),
-              area
-            )
-          end
-        end
-      RUBY
+            fn render(&self, frame: &mut Frame, area: Rect) {
+                let height = (area.height as usize).saturating_sub(2);
+                let start = self.scroll_offset.saturating_sub(height.saturating_sub(1));
+                let visible: Vec<_> = self.lines.iter().skip(start).take(height).collect();
+
+                let content = visible
+                    .iter()
+                    .map(|e| format!("[{}] {}", e.time, e.text))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let follow = if self.auto_scroll { " [FOLLOW]" } else { "" };
+                let title = format!("Logs ({} lines){}", self.lines.len(), follow);
+
+                frame.render_widget(
+                    Paragraph::new(content)
+                        .block(Block::bordered().title(title)),
+                    area,
+                );
+            }
+        }
+      RUST
     },
     "tab_view" => {
       desc: "Tabbed container with content",
-      code: <<~'RUBY'
-        class TabView
-          def initialize(tabs)
-            @tabs = tabs  # [{ title: "Tab1", content: -> (frame, tui, area) { ... } }, ...]
-            @selected = 0
-          end
+      code: <<~'RUST'
+        use ratatui::{
+            layout::{Constraint, Layout, Rect},
+            style::{Modifier, Style, Stylize},
+            widgets::{Block, Borders, Tabs},
+            Frame,
+        };
 
-          def handle_event(event)
-            case event
-            in { type: :key, code: "tab" }
-              @selected = (@selected + 1) % @tabs.size
-            in { type: :key, code: "shift_tab" | "backtab" }
-              @selected = (@selected - 1) % @tabs.size
-            in { type: :key, code: n } if n.match?(/^[1-9]$/) && n.to_i <= @tabs.size
-              @selected = n.to_i - 1
-            else
-              nil
-            end
-          end
+        struct Tab<'a> {
+            title: &'a str,
+            render: fn(&mut Frame, Rect),
+        }
 
-          def render(frame, tui, area)
-            areas = tui.layout_split(area, direction: :vertical, constraints: [
-              tui.constraint_length(3),
-              tui.constraint_fill(1)
-            ])
+        struct TabView<'a> {
+            tabs: Vec<Tab<'a>>,
+            selected: usize,
+        }
 
-            # Tab bar
-            frame.render_widget(
-              tui.tabs(
-                titles: @tabs.map { |t| t[:title] },
-                selected: @selected,
-                highlight_style: tui.style(fg: :yellow, modifiers: [:bold]),
-                divider: " │ ",
-                block: tui.block(borders: [:bottom])
-              ),
-              areas[0]
-            )
+        impl<'a> TabView<'a> {
+            fn new(tabs: Vec<Tab<'a>>) -> Self {
+                Self { tabs, selected: 0 }
+            }
 
-            # Content
-            content_renderer = @tabs[@selected][:content]
-            content_renderer.call(frame, tui, areas[1])
-          end
-        end
+            fn handle_key(&mut self, key: KeyEvent) {
+                match key.code {
+                    KeyCode::Tab => {
+                        self.selected = (self.selected + 1) % self.tabs.len();
+                    }
+                    KeyCode::BackTab => {
+                        self.selected = (self.selected + self.tabs.len() - 1) % self.tabs.len();
+                    }
+                    KeyCode::Char(c) if c.is_ascii_digit() => {
+                        let n = c.to_digit(10).unwrap() as usize;
+                        if n > 0 && n <= self.tabs.len() {
+                            self.selected = n - 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
 
-        # Usage:
-        @tabs = TabView.new([
-          { title: "Overview", content: ->(f, t, a) { render_overview(f, t, a) } },
-          { title: "Details",  content: ->(f, t, a) { render_details(f, t, a) } },
-          { title: "Logs",     content: ->(f, t, a) { render_logs(f, t, a) } }
-        ])
-      RUBY
+            fn render(&self, frame: &mut Frame, area: Rect) {
+                let [tab_area, content_area] = Layout::vertical([
+                    Constraint::Length(3),
+                    Constraint::Fill(1),
+                ]).areas(area);
+
+                // Tab bar
+                let titles: Vec<_> = self.tabs.iter().map(|t| t.title).collect();
+                frame.render_widget(
+                    Tabs::new(titles)
+                        .select(self.selected)
+                        .highlight_style(Style::new().yellow().bold())
+                        .divider(" │ ")
+                        .block(Block::default().borders(Borders::BOTTOM)),
+                    tab_area,
+                );
+
+                // Content
+                if let Some(tab) = self.tabs.get(self.selected) {
+                    (tab.render)(frame, content_area);
+                }
+            }
+        }
+
+        // Usage:
+        // let tabs = TabView::new(vec![
+        //     Tab { title: "Overview", render: render_overview },
+        //     Tab { title: "Details", render: render_details },
+        //     Tab { title: "Logs", render: render_logs },
+        // ]);
+      RUST
     },
     "split_pane" => {
       desc: "Resizable split panes",
-      code: <<~'RUBY'
-        class SplitPane
-          attr_accessor :ratio
+      code: <<~'RUST'
+        use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-          def initialize(direction: :horizontal, ratio: 0.5, min_size: 5)
-            @direction = direction
-            @ratio = ratio
-            @min_size = min_size
-            @focused = :left  # or :right / :top / :bottom
-          end
+        #[derive(Clone, Copy, PartialEq)]
+        enum Pane {
+            Left,
+            Right,
+        }
 
-          def handle_event(event)
-            case event
-            in { type: :key, code: "+" | "=" }
-              @ratio = [@ratio + 0.05, 0.9].min
-            in { type: :key, code: "-" | "_" }
-              @ratio = [@ratio - 0.05, 0.1].max
-            in { type: :key, code: "tab" }
-              @focused = @focused == :left ? :right : :left
-            else
-              nil
-            end
-          end
+        struct SplitPane {
+            direction: Direction,
+            ratio: f64,
+            min_size: u16,
+            focused: Pane,
+        }
 
-          def areas(parent_area, tui)
-            if @direction == :horizontal
-              left_width = (parent_area.width * @ratio).to_i
-              left_width = [@min_size, left_width, parent_area.width - @min_size].sort[1]
+        impl SplitPane {
+            fn horizontal(ratio: f64) -> Self {
+                Self {
+                    direction: Direction::Horizontal,
+                    ratio,
+                    min_size: 5,
+                    focused: Pane::Left,
+                }
+            }
 
-              tui.layout_split(parent_area, direction: :horizontal, constraints: [
-                tui.constraint_length(left_width),
-                tui.constraint_fill(1)
-              ])
-            else
-              top_height = (parent_area.height * @ratio).to_i
-              top_height = [@min_size, top_height, parent_area.height - @min_size].sort[1]
+            fn vertical(ratio: f64) -> Self {
+                Self {
+                    direction: Direction::Vertical,
+                    ratio,
+                    min_size: 5,
+                    focused: Pane::Left,
+                }
+            }
 
-              tui.layout_split(parent_area, direction: :vertical, constraints: [
-                tui.constraint_length(top_height),
-                tui.constraint_fill(1)
-              ])
-            end
-          end
+            fn handle_key(&mut self, key: KeyEvent) {
+                match key.code {
+                    KeyCode::Char('+') | KeyCode::Char('=') => {
+                        self.ratio = (self.ratio + 0.05).min(0.9);
+                    }
+                    KeyCode::Char('-') | KeyCode::Char('_') => {
+                        self.ratio = (self.ratio - 0.05).max(0.1);
+                    }
+                    KeyCode::Tab => {
+                        self.focused = if self.focused == Pane::Left {
+                            Pane::Right
+                        } else {
+                            Pane::Left
+                        };
+                    }
+                    _ => {}
+                }
+            }
 
-          def focused?(pane)
-            pane == @focused
-          end
-        end
+            fn areas(&self, parent: Rect) -> [Rect; 2] {
+                let size = if self.direction == Direction::Horizontal {
+                    let w = (parent.width as f64 * self.ratio) as u16;
+                    w.clamp(self.min_size, parent.width - self.min_size)
+                } else {
+                    let h = (parent.height as f64 * self.ratio) as u16;
+                    h.clamp(self.min_size, parent.height - self.min_size)
+                };
 
-        # Usage:
-        @split = SplitPane.new(direction: :horizontal, ratio: 0.3)
-        left_area, right_area = @split.areas(frame.area, tui)
+                Layout::default()
+                    .direction(self.direction)
+                    .constraints([Constraint::Length(size), Constraint::Fill(1)])
+                    .areas(parent)
+            }
 
-        # Style focused pane differently
-        left_style = @split.focused?(:left) ? tui.style(fg: :cyan) : tui.style(fg: :dark_gray)
-      RUBY
+            fn is_focused(&self, pane: Pane) -> bool {
+                self.focused == pane
+            }
+        }
+
+        // Usage:
+        // let mut split = SplitPane::horizontal(0.3);
+        // let [left, right] = split.areas(frame.area());
+        // let left_style = if split.is_focused(Pane::Left) { ... };
+      RUST
     },
     "command_palette" => {
       desc: "Ctrl+P style command picker",
-      code: <<~'RUBY'
-        class CommandPalette
-          Command = Data.define(:name, :description, :action)
+      code: <<~'RUST'
+        use ratatui::{
+            layout::{Constraint, Layout, Rect},
+            style::{Color, Style, Stylize},
+            widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+            Frame,
+        };
 
-          def initialize(commands)
-            @commands = commands
-            @query = ""
-            @visible = false
-            @list_state = RatatuiRuby::State::ListState.new
-          end
+        struct Command {
+            name: String,
+            description: String,
+            action: fn(&mut App),
+        }
 
-          def show!
-            @visible = true
-            @query = ""
-            @list_state.select(0)
-          end
+        struct CommandPalette {
+            commands: Vec<Command>,
+            query: String,
+            visible: bool,
+            state: ListState,
+        }
 
-          def hide!
-            @visible = false
-          end
+        impl CommandPalette {
+            fn new(commands: Vec<Command>) -> Self {
+                Self {
+                    commands,
+                    query: String::new(),
+                    visible: false,
+                    state: ListState::default(),
+                }
+            }
 
-          def visible?
-            @visible
-          end
+            fn show(&mut self) {
+                self.visible = true;
+                self.query.clear();
+                self.state.select_first();
+            }
 
-          def filtered_commands
-            return @commands if @query.empty?
-            pattern = @query.chars.join(".*")
-            @commands.select { |c| c.name.match?(/#{pattern}/i) || c.description.match?(/#{pattern}/i) }
-          end
+            fn hide(&mut self) {
+                self.visible = false;
+            }
 
-          def handle_event(event)
-            return false unless @visible
+            fn is_visible(&self) -> bool {
+                self.visible
+            }
 
-            case event
-            in { type: :key, code: "escape" }
-              hide!
-            in { type: :key, code: "enter" }
-              execute_selected
-              hide!
-            in { type: :key, code: "up" }
-              @list_state.select_previous
-            in { type: :key, code: "down" }
-              @list_state.select_next
-            in { type: :key, code: "backspace" }
-              @query = @query[0..-2]
-              @list_state.select_first
-            in { type: :key, code: c } if c.is_a?(String) && c.length == 1
-              @query += c
-              @list_state.select_first
-            else
-              nil
-            end
-            true  # Event consumed
-          end
+            fn filtered_commands(&self) -> Vec<&Command> {
+                if self.query.is_empty() {
+                    self.commands.iter().collect()
+                } else {
+                    let query = self.query.to_lowercase();
+                    self.commands
+                        .iter()
+                        .filter(|c| {
+                            c.name.to_lowercase().contains(&query)
+                                || c.description.to_lowercase().contains(&query)
+                        })
+                        .collect()
+                }
+            }
 
-          def execute_selected
-            cmds = filtered_commands
-            idx = @list_state.selected || 0
-            cmds[idx]&.action&.call
-          end
+            fn handle_key(&mut self, key: KeyEvent) -> Option<fn(&mut App)> {
+                if !self.visible {
+                    return None;
+                }
 
-          def render(frame, tui)
-            return unless @visible
+                match key.code {
+                    KeyCode::Esc => self.hide(),
+                    KeyCode::Enter => {
+                        let cmds = self.filtered_commands();
+                        if let Some(cmd) = self.state.selected().and_then(|i| cmds.get(i)) {
+                            let action = cmd.action;
+                            self.hide();
+                            return Some(action);
+                        }
+                    }
+                    KeyCode::Up => self.state.select_previous(),
+                    KeyCode::Down => self.state.select_next(),
+                    KeyCode::Backspace => {
+                        self.query.pop();
+                        self.state.select_first();
+                    }
+                    KeyCode::Char(c) => {
+                        self.query.push(c);
+                        self.state.select_first();
+                    }
+                    _ => {}
+                }
+                None
+            }
 
-            # Center palette
-            w = [frame.area.width - 20, 60].min
-            h = [filtered_commands.size + 4, 15].min
-            x = (frame.area.width - w) / 2
-            y = 3
+            fn render(&mut self, frame: &mut Frame) {
+                if !self.visible {
+                    return;
+                }
 
-            area = tui.rect(x: x, y: y, width: w, height: h)
+                let cmds = self.filtered_commands();
+                let w = frame.area().width.saturating_sub(20).min(60);
+                let h = (cmds.len() + 4).min(15) as u16;
+                let x = (frame.area().width.saturating_sub(w)) / 2;
+                let y = 3;
 
-            # Clear and draw
-            frame.render_widget(RatatuiRuby::Widgets::Clear.new, area)
+                let area = Rect::new(x, y, w, h);
 
-            areas = tui.layout_split(area, direction: :vertical, constraints: [
-              tui.constraint_length(3),
-              tui.constraint_fill(1)
-            ])
+                frame.render_widget(Clear, area);
 
-            # Search input
-            prompt = @query.empty? ? "Type a command..." : @query
-            frame.render_widget(
-              tui.paragraph(
-                text: "> #{prompt}",
-                block: tui.block(borders: [:all], border_style: tui.style(fg: :cyan))
-              ),
-              areas[0]
-            )
+                let [search_area, list_area] = Layout::vertical([
+                    Constraint::Length(3),
+                    Constraint::Fill(1),
+                ]).areas(area);
 
-            # Command list
-            items = filtered_commands.map { |c| "#{c.name}  #{c.description}" }
-            list = tui.list(
-              items: items,
-              highlight_style: tui.style(bg: :blue),
-              block: tui.block(borders: [:left, :right, :bottom])
-            )
-            frame.render_stateful_widget(list, areas[1], @list_state)
-          end
-        end
+                // Search input
+                let prompt = if self.query.is_empty() {
+                    "Type a command...".to_string()
+                } else {
+                    self.query.clone()
+                };
+                frame.render_widget(
+                    Paragraph::new(format!("> {}", prompt))
+                        .block(Block::bordered().border_style(Style::new().cyan())),
+                    search_area,
+                );
 
-        # Usage:
-        @palette = CommandPalette.new([
-          Command.new(name: "quit", description: "Exit the application", action: -> { @running = false }),
-          Command.new(name: "save", description: "Save current file", action: -> { save_file }),
-          Command.new(name: "open", description: "Open file", action: -> { open_file_dialog })
-        ])
+                // Command list
+                let items: Vec<ListItem> = cmds
+                    .iter()
+                    .map(|c| ListItem::new(format!("{}  {}", c.name, c.description)))
+                    .collect();
+                let list = List::new(items)
+                    .highlight_style(Style::new().bg(Color::Blue))
+                    .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
 
-        # Toggle with Ctrl+P:
-        # in { type: :key, code: "p", modifiers: ["ctrl"] } then @palette.show!
-      RUBY
+                frame.render_stateful_widget(list, list_area, &mut self.state);
+            }
+        }
+
+        // Usage:
+        // Toggle with Ctrl+P:
+        // if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+        //     palette.show();
+        // }
+      RUST
     }
   }.freeze
 
@@ -512,7 +702,9 @@ class RatatuiComponent < Claude::Generator
     section name
     info component[:desc]
     puts
+    puts "```rust"
     puts component[:code]
+    puts "```"
   end
 end
 

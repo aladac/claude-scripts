@@ -28,15 +28,15 @@ class RatatuiConvert < Claude::Generator
   def show_usage
     section "CLI to TUI Converter"
 
-    info "Analyzes a Ruby CLI script and suggests TUI structure."
+    info "Analyzes a Rust CLI program and suggests TUI structure."
     puts
     bold "Usage:"
-    info "  /ratatui:convert <file.rb>"
+    info "  /ratatui:convert <file.rs>"
     puts
     bold "What it does:"
-    info "  1. Reads the script"
-    info "  2. Identifies outputs (puts, print, pp)"
-    info "  3. Identifies inputs (gets, ARGV, options)"
+    info "  1. Reads the source file"
+    info "  2. Identifies outputs (println!, print!, eprintln!)"
+    info "  3. Identifies inputs (stdin, args, clap)"
     info "  4. Suggests widget mapping"
     info "  5. Generates scaffold recommendation"
   end
@@ -53,8 +53,8 @@ class RatatuiConvert < Claude::Generator
       outputs: find_outputs(content),
       inputs: find_inputs(content),
       loops: find_loops(content),
-      classes: find_classes(content),
-      methods: find_methods(content)
+      structs: find_structs(content),
+      functions: find_functions(content)
     }
 
     report_outputs(analysis[:outputs])
@@ -66,51 +66,49 @@ class RatatuiConvert < Claude::Generator
 
   def find_outputs(content)
     {
-      puts: content.scan(/\bputs\b/).size,
-      print: content.scan(/\bprint\b/).size,
-      pp: content.scan(/\bpp\b/).size,
-      printf: content.scan(/\bprintf\b/).size,
-      tables: content.scan(/TTY::Table|terminal-table|hirb/).size > 0,
-      progress: content.scan(/TTY::ProgressBar|ProgressBar|spinner/i).size > 0,
-      colors: content.scan(/CLI::UI|pastel|rainbow|colorize/i).size > 0
+      println: content.scan(/\bprintln!\b/).size,
+      print: content.scan(/\bprint!\b/).size,
+      eprintln: content.scan(/\beprintln!\b/).size,
+      writeln: content.scan(/\bwriteln!\b/).size,
+      tables: content.include?("comfy_table") || content.include?("tabled") || content.include?("prettytable"),
+      progress: content.include?("indicatif") || content.include?("ProgressBar"),
+      colors: content.include?("colored") || content.include?("termcolor") || content.include?("ansi_term")
     }
   end
 
   def find_inputs(content)
     {
-      gets: content.scan(/\bgets\b/).size,
-      argv: content.scan(/\bARGV\b/).size,
-      stdin: content.scan(/\$stdin|\bSTDIN\b/).size,
-      optparse: content.include?("OptionParser") || content.include?("optparse"),
-      thor: content.include?("Thor"),
-      tty_prompt: content.include?("TTY::Prompt"),
-      readline: content.include?("Readline")
+      stdin: content.scan(/\bstdin\b/).size,
+      args: content.scan(/\bstd::env::args\b/).size,
+      clap: content.include?("clap::") || content.include?("use clap"),
+      dialoguer: content.include?("dialoguer"),
+      rustyline: content.include?("rustyline")
     }
   end
 
   def find_loops(content)
     {
-      loop: content.scan(/\bloop\s+do\b/).size,
+      loop: content.scan(/\bloop\s*\{/).size,
       while: content.scan(/\bwhile\b/).size,
-      each: content.scan(/\.each\b/).size,
-      map: content.scan(/\.map\b/).size
+      for: content.scan(/\bfor\b/).size,
+      iter: content.scan(/\.iter\(\)/).size
     }
   end
 
-  def find_classes(content)
-    content.scan(/^\s*class\s+(\w+)/).flatten
+  def find_structs(content)
+    content.scan(/^\s*(?:pub\s+)?struct\s+(\w+)/).flatten
   end
 
-  def find_methods(content)
-    content.scan(/^\s*def\s+(\w+)/).flatten
+  def find_functions(content)
+    content.scan(/^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)/).flatten
   end
 
   def report_outputs(outputs)
     puts
     bold "Outputs Detected"
 
-    total = outputs[:puts] + outputs[:print] + outputs[:pp] + outputs[:printf]
-    info "  Print statements: #{total}"
+    total = outputs[:println] + outputs[:print] + outputs[:eprintln] + outputs[:writeln]
+    info "  Print macros: #{total}"
     info "  Tables: #{outputs[:tables] ? 'Yes' : 'No'}"
     info "  Progress bars: #{outputs[:progress] ? 'Yes' : 'No'}"
     info "  Colors: #{outputs[:colors] ? 'Yes' : 'No'}"
@@ -120,19 +118,18 @@ class RatatuiConvert < Claude::Generator
     puts
     bold "Inputs Detected"
 
-    info "  gets calls: #{inputs[:gets]}"
-    info "  ARGV usage: #{inputs[:argv] > 0 ? 'Yes' : 'No'}"
-    info "  OptionParser: #{inputs[:optparse] ? 'Yes' : 'No'}"
-    info "  Thor CLI: #{inputs[:thor] ? 'Yes' : 'No'}"
-    info "  TTY::Prompt: #{inputs[:tty_prompt] ? 'Yes' : 'No'}"
+    info "  stdin usage: #{inputs[:stdin]}"
+    info "  std::env::args: #{inputs[:args] > 0 ? 'Yes' : 'No'}"
+    info "  clap: #{inputs[:clap] ? 'Yes' : 'No'}"
+    info "  dialoguer: #{inputs[:dialoguer] ? 'Yes' : 'No'}"
   end
 
   def report_structure(analysis)
     puts
     bold "Structure"
 
-    info "  Classes: #{analysis[:classes].join(', ')}" if analysis[:classes].any?
-    info "  Methods: #{analysis[:methods].size}"
+    info "  Structs: #{analysis[:structs].join(', ')}" if analysis[:structs].any?
+    info "  Functions: #{analysis[:functions].size}"
     info "  Loops: #{analysis[:loops].values.sum}"
   end
 
@@ -147,28 +144,28 @@ class RatatuiConvert < Claude::Generator
 
     # Based on outputs
     if outputs[:tables]
-      suggestions << ["Table", "Replace TTY::Table with tui.table()"]
+      suggestions << ["Table", "Replace comfy_table/tabled with ratatui Table widget"]
     end
 
     if outputs[:progress]
-      suggestions << ["Gauge/LineGauge", "Replace progress bars with tui.gauge()"]
+      suggestions << ["Gauge/LineGauge", "Replace indicatif with Gauge widget"]
     end
 
-    if outputs[:puts] > 10
+    if outputs[:println] > 10
       suggestions << ["Paragraph", "Consolidate output into Paragraph widgets"]
     end
 
     # Based on inputs
-    if inputs[:gets] > 0 || inputs[:tty_prompt]
+    if inputs[:stdin] > 0 || inputs[:dialoguer]
       suggestions << ["TextInput", "Use /ratatui:snippet input for text entry"]
     end
 
-    if inputs[:optparse] || inputs[:thor] || inputs[:argv] > 0
+    if inputs[:clap] || inputs[:args] > 0
       suggestions << ["CommandPalette", "Use /ratatui:component command_palette"]
     end
 
     # Based on structure
-    if analysis[:loops][:loop] > 0 || analysis[:loops][:while] > 0
+    if analysis[:loops][:loop] > 0
       suggestions << ["Event Loop", "Already has loop structure - adapt to TUI event loop"]
     end
 
@@ -187,23 +184,23 @@ class RatatuiConvert < Claude::Generator
     bold "Recommended Approach"
     hr
 
-    basename = File.basename(path, ".rb")
+    basename = File.basename(path, ".rs")
 
     if analysis[:outputs][:tables]
       puts <<~TEXT
-        This script uses tables. Consider a list-based TUI:
+        This program uses tables. Consider a list-based TUI:
 
           /ratatui:scaffold #{basename}_tui list
 
         Then:
-        1. Convert table data to list items
+        1. Convert table data to list/table items
         2. Add Table widget for detailed view
         3. Add keyboard navigation (j/k/Enter)
 
       TEXT
     elsif analysis[:loops][:loop] > 0
       puts <<~TEXT
-        This script has a main loop. Good candidate for TUI:
+        This program has a main loop. Good candidate for TUI:
 
           /ratatui:scaffold #{basename}_tui dashboard
 
@@ -215,19 +212,23 @@ class RatatuiConvert < Claude::Generator
       TEXT
     elsif analysis[:outputs][:progress]
       puts <<~TEXT
-        This script has progress indicators. Use inline viewport:
+        This program has progress indicators. Use Gauge widget:
 
           /ratatui:scaffold #{basename}_tui basic
 
-        Add to run method:
-          RatatuiRuby.run(viewport: :inline, height: 5) do |tui|
-            # Progress display
-          end
+        Add Gauge for progress:
+        ```rust
+        let gauge = Gauge::default()
+            .ratio(progress)
+            .label(format!("{}%", (progress * 100.0) as u32))
+            .gauge_style(Style::new().fg(Color::Green));
+        frame.render_widget(gauge, area);
+        ```
 
       TEXT
     else
       puts <<~TEXT
-        Standard CLI script. Start with basic scaffold:
+        Standard CLI program. Start with basic scaffold:
 
           /ratatui:scaffold #{basename}_tui basic
 
@@ -239,6 +240,13 @@ class RatatuiConvert < Claude::Generator
       TEXT
     end
 
+    puts "Cargo.toml dependencies:"
+    puts "```toml"
+    puts '[dependencies]'
+    puts 'ratatui = "0.29"'
+    puts 'crossterm = "0.28"'
+    puts "```"
+    puts
     puts "Run /ratatui:docs all to load full documentation."
   end
 end

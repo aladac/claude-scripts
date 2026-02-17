@@ -4,7 +4,7 @@
 require_relative "../../../ruby/generator"
 
 class RatatuiScaffold < Claude::Generator
-  METADATA = { name: "ratatui:scaffold", desc: "Scaffold TUI app" }.freeze
+  METADATA = { name: "ratatui:scaffold", desc: "Scaffold Rust TUI app" }.freeze
 
   TEMPLATES = {
     "basic" => "Minimal app with event loop",
@@ -44,226 +44,237 @@ class RatatuiScaffold < Claude::Generator
   end
 
   def generate(name, template)
-    class_name = name.split("_").map(&:capitalize).join
-    content = send("template_#{template}", name, class_name)
-
-    # Determine output path
-    bin_dir = File.join(Dir.pwd, "bin")
-    if Dir.exist?(bin_dir)
-      path = File.join(bin_dir, name)
-    else
-      path = File.join(Dir.pwd, "#{name}.rb")
-    end
+    struct_name = name.split("_").map(&:capitalize).join
+    content = send("template_#{template}", name, struct_name)
 
     section "Generating #{template} scaffold"
 
-    if File.exist?(path)
-      err "File already exists: #{path}"
-      return
-    end
+    puts "```rust"
+    puts "// src/main.rs"
+    puts content
+    puts "```"
 
-    File.write(path, content)
-    File.chmod(0o755, path) if path.end_with?(name) # bin/ scripts
-
-    ok "Created: #{home_path(path)}"
-    info "Template: #{template}"
-    info "Class: #{class_name}"
+    puts
+    info "Cargo.toml dependencies:"
+    puts "```toml"
+    puts '[dependencies]'
+    puts 'ratatui = "0.29"'
+    puts 'crossterm = "0.28"'
+    puts "```"
   end
 
-  def template_basic(name, class_name)
-    <<~RUBY
-      #!/usr/bin/env ruby
-      # frozen_string_literal: true
+  def template_basic(_name, struct_name)
+    <<~RUST
+      use ratatui::{
+          crossterm::event::{self, Event, KeyCode},
+          widgets::{Block, Paragraph},
+          DefaultTerminal, Frame,
+      };
 
-      require "ratatui_ruby"
+      fn main() -> std::io::Result<()> {
+          let mut terminal = ratatui::init();
+          let result = run(&mut terminal);
+          ratatui::restore();
+          result
+      }
 
-      class #{class_name}
-        def initialize
-          @running = true
-        end
+      fn run(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+          loop {
+              terminal.draw(ui)?;
 
-        def run
-          RatatuiRuby.run do |tui|
-            while @running
-              tui.draw { |frame| render(frame, tui) }
-              handle_event(tui.poll_event)
-            end
-          end
-        end
+              if let Event::Key(key) = event::read()? {
+                  if key.code == KeyCode::Char('q') {
+                      break Ok(());
+                  }
+              }
+          }
+      }
 
-        private
-
-        def render(frame, tui)
+      fn ui(frame: &mut Frame) {
           frame.render_widget(
-            tui.paragraph(
-              text: "Hello, RatatuiRuby! Press 'q' to quit.",
-              alignment: :center,
-              block: tui.block(title: "#{class_name}", borders: [:all])
-            ),
-            frame.area
-          )
-        end
-
-        def handle_event(event)
-          case event
-          in { type: :key, code: "q" } | { type: :key, code: "c", modifiers: ["ctrl"] }
-            @running = false
-          else
-            nil
-          end
-        end
-      end
-
-      #{class_name}.new.run if __FILE__ == $PROGRAM_NAME
-    RUBY
+              Paragraph::new("Hello, Ratatui! Press 'q' to quit.")
+                  .block(Block::bordered().title("#{struct_name}")),
+              frame.area(),
+          );
+      }
+    RUST
   end
 
-  def template_list(name, class_name)
-    <<~RUBY
-      #!/usr/bin/env ruby
-      # frozen_string_literal: true
+  def template_list(_name, struct_name)
+    <<~RUST
+      use ratatui::{
+          crossterm::event::{self, Event, KeyCode},
+          layout::{Constraint, Layout},
+          style::{Style, Stylize},
+          widgets::{Block, List, ListItem, ListState},
+          DefaultTerminal, Frame,
+      };
 
-      require "ratatui_ruby"
+      struct App {
+          items: Vec<String>,
+          state: ListState,
+          running: bool,
+      }
 
-      class #{class_name}
-        def initialize
-          @items = %w[Item1 Item2 Item3 Item4 Item5]
-          @list_state = RatatuiRuby::State::ListState.new
-          @list_state.select(0)
-          @running = true
-        end
+      impl App {
+          fn new() -> Self {
+              Self {
+                  items: vec![
+                      "Item 1".into(),
+                      "Item 2".into(),
+                      "Item 3".into(),
+                      "Item 4".into(),
+                      "Item 5".into(),
+                  ],
+                  state: ListState::default().with_selected(Some(0)),
+                  running: true,
+              }
+          }
 
-        def run
-          RatatuiRuby.run do |tui|
-            while @running
-              tui.draw { |frame| render(frame, tui) }
-              handle_event(tui.poll_event)
-            end
-          end
-        end
+          fn run(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+              while self.running {
+                  terminal.draw(|frame| self.render(frame))?;
+                  self.handle_events()?;
+              }
+              Ok(())
+          }
 
-        private
+          fn render(&mut self, frame: &mut Frame) {
+              let items: Vec<ListItem> = self.items
+                  .iter()
+                  .map(|i| ListItem::new(i.as_str()))
+                  .collect();
 
-        def render(frame, tui)
-          list = tui.list(
-            items: @items,
-            highlight_style: tui.style(modifiers: [:reversed]),
-            highlight_symbol: ">> ",
-            block: tui.block(title: "Select Item [j/k/Enter/q]", borders: [:all])
-          )
-          frame.render_stateful_widget(list, frame.area, @list_state)
-        end
+              let list = List::new(items)
+                  .highlight_style(Style::new().reversed())
+                  .highlight_symbol(">> ")
+                  .block(Block::bordered().title("#{struct_name} [j/k/Enter/q]"));
 
-        def handle_event(event)
-          case event
-          in { type: :key, code: "q" }
-            @running = false
-          in { type: :key, code: "up" | "k" }
-            @list_state.select_previous
-          in { type: :key, code: "down" | "j" }
-            @list_state.select_next
-          in { type: :key, code: "enter" }
-            handle_selection(@list_state.selected)
-          else
-            nil
-          end
-        end
+              frame.render_stateful_widget(list, frame.area(), &mut self.state);
+          }
 
-        def handle_selection(index)
-          return unless index
-          # TODO: Handle selection
-        end
-      end
+          fn handle_events(&mut self) -> std::io::Result<()> {
+              if let Event::Key(key) = event::read()? {
+                  match key.code {
+                      KeyCode::Char('q') => self.running = false,
+                      KeyCode::Down | KeyCode::Char('j') => self.state.select_next(),
+                      KeyCode::Up | KeyCode::Char('k') => self.state.select_previous(),
+                      KeyCode::Enter => self.handle_selection(),
+                      _ => {}
+                  }
+              }
+              Ok(())
+          }
 
-      #{class_name}.new.run if __FILE__ == $PROGRAM_NAME
-    RUBY
+          fn handle_selection(&mut self) {
+              if let Some(i) = self.state.selected() {
+                  // TODO: Handle selection of item i
+              }
+          }
+      }
+
+      fn main() -> std::io::Result<()> {
+          let mut terminal = ratatui::init();
+          let result = App::new().run(&mut terminal);
+          ratatui::restore();
+          result
+      }
+    RUST
   end
 
-  def template_dashboard(name, class_name)
-    <<~RUBY
-      #!/usr/bin/env ruby
-      # frozen_string_literal: true
+  def template_dashboard(_name, struct_name)
+    <<~RUST
+      use ratatui::{
+          crossterm::event::{self, Event, KeyCode},
+          layout::{Constraint, Layout},
+          style::{Style, Stylize},
+          widgets::{Block, Paragraph},
+          DefaultTerminal, Frame,
+      };
 
-      require "ratatui_ruby"
+      struct App {
+          running: bool,
+      }
 
-      class #{class_name}
-        def initialize
-          @running = true
-        end
+      impl App {
+          fn new() -> Self {
+              Self { running: true }
+          }
 
-        def run
-          RatatuiRuby.run do |tui|
-            while @running
-              tui.draw { |frame| render(frame, tui) }
-              handle_event(tui.poll_event)
-            end
-          end
-        end
+          fn run(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+              while self.running {
+                  terminal.draw(|frame| self.render(frame))?;
+                  self.handle_events()?;
+              }
+              Ok(())
+          }
 
-        private
+          fn render(&self, frame: &mut Frame) {
+              let [header, content, footer] = Layout::vertical([
+                  Constraint::Length(3),
+                  Constraint::Fill(1),
+                  Constraint::Length(1),
+              ]).areas(frame.area());
 
-        def render(frame, tui)
-          areas = tui.layout_split(frame.area, direction: :vertical, constraints: [
-            tui.constraint_length(3),
-            tui.constraint_fill(1),
-            tui.constraint_length(1)
-          ])
+              self.render_header(frame, header);
+              self.render_content(frame, content);
+              self.render_footer(frame, footer);
+          }
 
-          render_header(frame, tui, areas[0])
-          render_content(frame, tui, areas[1])
-          render_footer(frame, tui, areas[2])
-        end
+          fn render_header(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+              frame.render_widget(
+                  Paragraph::new("#{struct_name}")
+                      .centered()
+                      .style(Style::new().cyan().bold())
+                      .block(Block::default().borders(ratatui::widgets::Borders::BOTTOM)),
+                  area,
+              );
+          }
 
-        def render_header(frame, tui, area)
-          frame.render_widget(
-            tui.paragraph(
-              text: "#{class_name}",
-              alignment: :center,
-              style: tui.style(fg: :cyan, modifiers: [:bold]),
-              block: tui.block(borders: [:bottom])
-            ),
-            area
-          )
-        end
+          fn render_content(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+              let [sidebar, main] = Layout::horizontal([
+                  Constraint::Length(20),
+                  Constraint::Fill(1),
+              ]).areas(area);
 
-        def render_content(frame, tui, area)
-          cols = tui.layout_split(area, direction: :horizontal, constraints: [
-            tui.constraint_length(20),
-            tui.constraint_fill(1)
-          ])
+              frame.render_widget(
+                  Paragraph::new("Sidebar")
+                      .block(Block::bordered().title("Nav")),
+                  sidebar,
+              );
+              frame.render_widget(
+                  Paragraph::new("Main content area")
+                      .block(Block::bordered().title("Content")),
+                  main,
+              );
+          }
 
-          frame.render_widget(
-            tui.paragraph(text: "Sidebar", block: tui.block(title: "Nav", borders: [:all])),
-            cols[0]
-          )
-          frame.render_widget(
-            tui.paragraph(text: "Main content area", block: tui.block(title: "Content", borders: [:all])),
-            cols[1]
-          )
-        end
+          fn render_footer(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+              frame.render_widget(
+                  Paragraph::new(" q: Quit | Tab: Switch pane ")
+                      .style(Style::new().dark_gray()),
+                  area,
+              );
+          }
 
-        def render_footer(frame, tui, area)
-          frame.render_widget(
-            tui.paragraph(
-              text: " q: Quit | Tab: Switch pane ",
-              style: tui.style(fg: :dark_gray)
-            ),
-            area
-          )
-        end
+          fn handle_events(&mut self) -> std::io::Result<()> {
+              if let Event::Key(key) = event::read()? {
+                  match key.code {
+                      KeyCode::Char('q') => self.running = false,
+                      _ => {}
+                  }
+              }
+              Ok(())
+          }
+      }
 
-        def handle_event(event)
-          case event
-          in { type: :key, code: "q" } | { type: :key, code: "c", modifiers: ["ctrl"] }
-            @running = false
-          else
-            nil
-          end
-        end
-      end
-
-      #{class_name}.new.run if __FILE__ == $PROGRAM_NAME
-    RUBY
+      fn main() -> std::io::Result<()> {
+          let mut terminal = ratatui::init();
+          let result = App::new().run(&mut terminal);
+          ratatui::restore();
+          result
+      }
+    RUST
   end
 end
 

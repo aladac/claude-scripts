@@ -1,34 +1,28 @@
-# RatatuiRuby Layout
+# Ratatui Layout
 
 Constraint-based layouts that adapt to terminal size.
 
-## Layout.split
+## Layout::vertical / Layout::horizontal
 
 Split an area into regions using constraints.
 
-```ruby
-areas = Layout.split(
-  frame.area,
-  direction: :vertical,         # or :horizontal
-  constraints: [
-    Constraint.length(3),       # Fixed 3 rows
-    Constraint.fill(1),         # Remaining space
-    Constraint.length(1)        # Fixed 1 row
-  ]
-)
+```rust
+use ratatui::layout::{Layout, Constraint, Direction, Rect};
 
-# areas[0] = header (3 rows)
-# areas[1] = content (fills)
-# areas[2] = footer (1 row)
-```
+let [header, content, footer] = Layout::vertical([
+    Constraint::Length(3),    // Fixed 3 rows
+    Constraint::Fill(1),      // Remaining space
+    Constraint::Length(1),    // Fixed 1 row
+]).areas(frame.area());
 
-### TUI Shorthand
-
-```ruby
-tui.layout_split(frame.area, direction: :horizontal, constraints: [
-  tui.constraint_length(20),
-  tui.constraint_fill(1)
-])
+// Or with direction
+let areas = Layout::default()
+    .direction(Direction::Horizontal)
+    .constraints([
+        Constraint::Length(20),
+        Constraint::Fill(1),
+    ])
+    .split(frame.area());
 ```
 
 ---
@@ -39,62 +33,49 @@ tui.layout_split(frame.area, direction: :horizontal, constraints: [
 
 Fixed size in cells.
 
-```ruby
-Constraint.length(10)   # Exactly 10 cells
+```rust
+Constraint::Length(10)   // Exactly 10 cells
 ```
 
 ### Percentage
 
 Percentage of available space.
 
-```ruby
-Constraint.percentage(50)   # 50% of area
+```rust
+Constraint::Percentage(50)   // 50% of area
 ```
 
 ### Min / Max
 
 Minimum or maximum size.
 
-```ruby
-Constraint.min(5)    # At least 5 cells, grows if space permits
-Constraint.max(20)   # At most 20 cells, shrinks if needed
+```rust
+Constraint::Min(5)     // At least 5 cells, grows if space permits
+Constraint::Max(20)    // At most 20 cells, shrinks if needed
 ```
 
 ### Fill
 
 Proportional distribution of remaining space (like flex-grow).
 
-```ruby
-Constraint.fill(1)   # Equal share
-Constraint.fill(2)   # Double share
+```rust
+Constraint::Fill(1)    // Equal share
+Constraint::Fill(2)    // Double share
 
-# Example: sidebar (1x) + content (2x)
-constraints: [Constraint.fill(1), Constraint.fill(2)]
+// Example: sidebar (1x) + content (2x)
+let [sidebar, content] = Layout::horizontal([
+    Constraint::Fill(1),
+    Constraint::Fill(2),
+]).areas(area);
 ```
 
 ### Ratio
 
 Exact fraction of space.
 
-```ruby
-Constraint.ratio(1, 3)   # 1/3rd of area
-Constraint.ratio(2, 5)   # 2/5ths
-```
-
----
-
-## Batch Creation
-
-Create multiple constraints at once.
-
-```ruby
-Constraint.from_lengths([10, 20, 10])
-# => [Constraint.length(10), Constraint.length(20), Constraint.length(10)]
-
-Constraint.from_percentages([25, 50, 25])
-Constraint.from_mins([5, 10, 5])
-Constraint.from_fills([1, 2, 1])
-Constraint.from_ratios([[1, 4], [2, 4], [1, 4]])
+```rust
+Constraint::Ratio(1, 3)   // 1/3rd of area
+Constraint::Ratio(2, 5)   // 2/5ths
 ```
 
 ---
@@ -103,24 +84,34 @@ Constraint.from_ratios([[1, 4], [2, 4], [1, 4]])
 
 Rectangle with position and size.
 
-```ruby
-rect = Rect.new(x: 0, y: 0, width: 80, height: 24)
+```rust
+let rect = Rect::new(0, 0, 80, 24);
 
-rect.x          # Left edge
-rect.y          # Top edge
-rect.width      # Width in cells
-rect.height     # Height in cells
-rect.right      # x + width
-rect.bottom     # y + height
-rect.area       # width * height
+rect.x           // Left edge
+rect.y           // Top edge
+rect.width       // Width in cells
+rect.height      // Height in cells
+rect.right()     // x + width
+rect.bottom()    // y + height
+rect.area()      // width * height
+rect.is_empty()  // width or height is 0
 ```
 
 ### Frame Area
 
-```ruby
-tui.draw do |frame|
-  frame.area    # Full terminal area as Rect
-end
+```rust
+terminal.draw(|frame| {
+    let area = frame.area();  // Full terminal area
+})?;
+```
+
+### Inner Area (for borders)
+
+```rust
+let block = Block::bordered().title("Content");
+let inner = block.inner(area);  // Area inside border
+frame.render_widget(block, area);
+frame.render_widget(content, inner);
 ```
 
 ---
@@ -129,43 +120,19 @@ end
 
 Compose layouts by splitting recursively.
 
-```ruby
-# Main layout: sidebar + content
-main = Layout.split(frame.area, direction: :horizontal, constraints: [
-  Constraint.length(25),
-  Constraint.fill(1)
-])
-sidebar_area = main[0]
-content_area = main[1]
+```rust
+// Main layout: sidebar + content
+let [sidebar_area, main_area] = Layout::horizontal([
+    Constraint::Length(25),
+    Constraint::Fill(1),
+]).areas(frame.area());
 
-# Split content: header + body + footer
-content = Layout.split(content_area, direction: :vertical, constraints: [
-  Constraint.length(3),
-  Constraint.fill(1),
-  Constraint.length(1)
-])
-header_area = content[0]
-body_area = content[1]
-footer_area = content[2]
-```
-
----
-
-## Inner Area
-
-Calculate space inside a bordered block.
-
-```ruby
-block = Block.new(borders: [:all])
-frame.render_widget(block, area)
-
-# Inner area (1-cell border)
-inner = Rect.new(
-  x: area.x + 1,
-  y: area.y + 1,
-  width: [area.width - 2, 0].max,
-  height: [area.height - 2, 0].max
-)
+// Split content: header + body + footer
+let [header, body, footer] = Layout::vertical([
+    Constraint::Length(3),
+    Constraint::Fill(1),
+    Constraint::Length(1),
+]).areas(main_area);
 ```
 
 ---
@@ -184,40 +151,72 @@ inner = Rect.new(
 +----------+-------------------+
 ```
 
-```ruby
-cols = Layout.split(frame.area, direction: :horizontal, constraints: [
-  Constraint.length(20),
-  Constraint.fill(1)
-])
+```rust
+let [sidebar, main] = Layout::horizontal([
+    Constraint::Length(20),
+    Constraint::Fill(1),
+]).areas(frame.area());
 
-rows = Layout.split(cols[1], direction: :vertical, constraints: [
-  Constraint.length(3),
-  Constraint.fill(1),
-  Constraint.length(1)
-])
-
-sidebar = cols[0]
-header = rows[0]
-content = rows[1]
-footer = rows[2]
+let [header, content, footer] = Layout::vertical([
+    Constraint::Length(3),
+    Constraint::Fill(1),
+    Constraint::Length(1),
+]).areas(main);
 ```
 
 ### Equal Columns
 
-```ruby
-Layout.split(area, direction: :horizontal, constraints: [
-  Constraint.percentage(33),
-  Constraint.percentage(34),
-  Constraint.percentage(33)
-])
+```rust
+let [left, center, right] = Layout::horizontal([
+    Constraint::Percentage(33),
+    Constraint::Percentage(34),
+    Constraint::Percentage(33),
+]).areas(area);
 ```
 
 ### Responsive (Min + Fill)
 
-```ruby
-# Sidebar shrinks below content
-Layout.split(area, direction: :horizontal, constraints: [
-  Constraint.min(15),    # Sidebar at least 15
-  Constraint.fill(1)     # Content takes rest
-])
+```rust
+// Sidebar shrinks below content
+let [sidebar, content] = Layout::horizontal([
+    Constraint::Min(15),     // Sidebar at least 15
+    Constraint::Fill(1),     // Content takes rest
+]).areas(area);
+```
+
+### Centered Content
+
+```rust
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let [_, center, _] = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ]).areas(area);
+
+    let [_, center, _] = Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ]).areas(center);
+
+    center
+}
+
+// Use for popups
+let popup_area = centered_rect(60, 20, frame.area());
+frame.render_widget(Clear, popup_area);
+frame.render_widget(popup, popup_area);
+```
+
+---
+
+## Margin and Spacing
+
+```rust
+Layout::vertical([...])
+    .margin(1)           // All sides
+    .horizontal_margin(2)
+    .vertical_margin(1)
+    .spacing(1)          // Between areas
 ```

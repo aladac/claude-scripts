@@ -1,21 +1,21 @@
-# RatatuiRuby State Management
+# Ratatui State Management
 
 ## Stateless vs Stateful Widgets
 
-Most widgets are **stateless** — you create them each frame with explicit properties:
+Most widgets are **stateless** — you render them with explicit properties each frame:
 
-```ruby
-# Stateless: selection is in widget config
-List.new(items: items, selected_index: @selected)
+```rust
+// Stateless: selection passed directly
+let list = List::new(items);
+frame.render_widget(list, area);
 ```
 
 Some widgets support **stateful rendering** — a mutable State object tracks selection/scroll:
 
-```ruby
-# Stateful: selection is in State object
-@list_state = ListState.new
-@list_state.select(2)
-frame.render_stateful_widget(list, area, @list_state)
+```rust
+// Stateful: selection tracked in state
+let mut state = ListState::default().with_selected(Some(0));
+frame.render_stateful_widget(list, area, &mut state);
 ```
 
 ---
@@ -24,9 +24,10 @@ frame.render_stateful_widget(list, area, @list_state)
 
 Use `render_stateful_widget` when you need to:
 
-1. **Read back scroll offset** calculated by Ratatui (for mouse hit testing)
+1. **Track selection** across frames
 2. **Auto-scroll to selection** without manual offset math
-3. **Use navigation helpers** like `select_next`, `select_previous`
+3. **Use navigation helpers** like `select_next()`, `select_previous()`
+4. **Read back scroll offset** calculated by Ratatui
 
 ---
 
@@ -34,54 +35,70 @@ Use `render_stateful_widget` when you need to:
 
 Mutable state for List widgets.
 
-```ruby
-@list_state = ListState.new
+```rust
+use ratatui::widgets::ListState;
 
-# Selection
-@list_state.select(0)           # Select first item
-@list_state.select(nil)         # Deselect
-@list_state.selected            # => Integer or nil
+let mut state = ListState::default();
 
-# Navigation
-@list_state.select_next         # Move down
-@list_state.select_previous     # Move up
-@list_state.select_first        # Jump to top
-@list_state.select_last         # Jump to bottom
+// Selection
+state.select(Some(0));           // Select first item
+state.select(None);              // Deselect
+state.selected();                // => Option<usize>
 
-# Scrolling
-@list_state.scroll_down_by(5)
-@list_state.scroll_up_by(5)
-@list_state.offset              # Current scroll position
+// Navigation
+state.select_next();             // Move down
+state.select_previous();         // Move up
+state.select_first();            // Jump to first
+state.select_last();             // Jump to last
+
+// Scroll offset (read after render)
+state.offset();                  // Current scroll position
+*state.offset_mut() = 10;        // Set scroll offset
+```
+
+### With Builder
+
+```rust
+let state = ListState::default()
+    .with_selected(Some(0))
+    .with_offset(0);
 ```
 
 ### Usage
 
-```ruby
-@list_state = ListState.new
-@list_state.select(0)
+```rust
+struct App {
+    items: Vec<String>,
+    list_state: ListState,
+}
 
-RatatuiRuby.run do |tui|
-  loop do
-    tui.draw do |frame|
-      list = tui.list(
-        items: @items,
-        highlight_style: tui.style(modifiers: [:reversed])
-      )
-      frame.render_stateful_widget(list, frame.area, @list_state)
-    end
+impl App {
+    fn new() -> Self {
+        Self {
+            items: vec!["Item 1".into(), "Item 2".into()],
+            list_state: ListState::default().with_selected(Some(0)),
+        }
+    }
 
-    case tui.poll_event
-    in { type: :key, code: "down" }
-      @list_state.select_next
-    in { type: :key, code: "up" }
-      @list_state.select_previous
-    in { type: :key, code: "q" }
-      break
-    else
-      nil
-    end
-  end
-end
+    fn render(&mut self, frame: &mut Frame) {
+        let list = List::new(self.items.iter().map(|i| i.as_str()))
+            .highlight_style(Style::new().reversed())
+            .highlight_symbol(">> ")
+            .block(Block::bordered().title("Select"));
+
+        frame.render_stateful_widget(list, frame.area(), &mut self.list_state);
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => self.list_state.select_next(),
+            KeyCode::Up | KeyCode::Char('k') => self.list_state.select_previous(),
+            KeyCode::Home => self.list_state.select_first(),
+            KeyCode::End => self.list_state.select_last(),
+            _ => {}
+        }
+    }
+}
 ```
 
 ---
@@ -90,21 +107,33 @@ end
 
 Mutable state for Table widgets.
 
-```ruby
-@table_state = TableState.new
+```rust
+use ratatui::widgets::TableState;
 
-# Row selection
-@table_state.select_row(0)
-@table_state.selected_row       # => Integer or nil
-@table_state.select_next_row
-@table_state.select_previous_row
+let mut state = TableState::default();
 
-# Column selection
-@table_state.select_column(1)
-@table_state.selected_column    # => Integer or nil
+// Row selection
+state.select(Some(0));
+state.selected();                // => Option<usize>
+state.select_next();
+state.select_previous();
+state.select_first();
+state.select_last();
 
-# Scroll
-@table_state.offset             # Read back after render
+// Scroll offset
+state.offset();
+*state.offset_mut() = 5;
+```
+
+### Usage
+
+```rust
+let table = Table::new(rows, widths)
+    .header(header)
+    .row_highlight_style(Style::new().reversed())
+    .highlight_symbol("> ");
+
+frame.render_stateful_widget(table, area, &mut self.table_state);
 ```
 
 ---
@@ -113,96 +142,144 @@ Mutable state for Table widgets.
 
 State for Scrollbar widgets.
 
-```ruby
-@scrollbar_state = ScrollbarState.new(content_length: 100, viewport_content_length: 20)
+```rust
+use ratatui::widgets::ScrollbarState;
 
-# Position
-@scrollbar_state.position = 25
-@scrollbar_state.position       # => 25
+let mut state = ScrollbarState::new(100)  // content_length
+    .position(25)
+    .viewport_content_length(20);
 
-# Scrolling
-@scrollbar_state.scroll_down(5)
-@scrollbar_state.scroll_up(5)
-@scrollbar_state.first          # Scroll to top
-@scrollbar_state.last           # Scroll to bottom
+// Navigation
+state.prev();
+state.next();
+state.first();
+state.last();
+
+// Position
+state.position();
+state.scroll_up(5);
+state.scroll_down(5);
+```
+
+### Syncing with List
+
+```rust
+fn render(&mut self, frame: &mut Frame, area: Rect) {
+    // Render list
+    let list = List::new(self.items.iter().map(|i| i.as_str()));
+    frame.render_stateful_widget(list, area, &mut self.list_state);
+
+    // Sync scrollbar with list
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+    let mut scrollbar_state = ScrollbarState::new(self.items.len())
+        .position(self.list_state.offset());
+
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        &mut scrollbar_state,
+    );
+}
 ```
 
 ---
 
-## Precedence Rules
+## App State Pattern
 
-When using `render_stateful_widget`, **State takes precedence over widget properties**:
+Keep application data separate from widget state:
 
-```ruby
-# Widget says selected_index: 0, State says select(5)
-# Result: item 5 is highlighted
-list = List.new(items: items, selected_index: 0)
-@state.select(5)
-frame.render_stateful_widget(list, area, @state)
-```
+```rust
+struct App {
+    // Application data
+    items: Vec<Item>,
+    filter: String,
 
-Widget properties for selection/offset are **ignored** in stateful mode.
+    // Widget state
+    list_state: ListState,
+    scroll_state: ScrollbarState,
+}
 
----
+impl App {
+    fn filtered_items(&self) -> Vec<&Item> {
+        self.items
+            .iter()
+            .filter(|i| i.name.contains(&self.filter))
+            .collect()
+    }
 
-## Optimistic Indexing
+    fn set_filter(&mut self, filter: String) {
+        self.filter = filter;
+        // Reset selection when filter changes
+        self.list_state.select_first();
+    }
 
-Navigation methods (`select_next`, `select_last`) use "optimistic indexing":
-
-- They set index immediately, even past bounds
-- The renderer clamps to valid range on draw
-- Reading `selected` between call and render may return out-of-bounds
-
-To detect actual bounds:
-
-```ruby
-max_index = items.size - 1
-return if (@list_state.selected || 0) >= max_index
-@list_state.select_next
-```
-
----
-
-## Thread/Ractor Safety
-
-State objects are **NOT Ractor-shareable** — they contain mutable internal state.
-
-```ruby
-# Good: Store in instance variable
-@list_state = ListState.new
-
-# Bad: Include in immutable Model
-Model = Data.define(:state)  # Don't do this with State objects
+    fn selected_item(&self) -> Option<&Item> {
+        self.list_state.selected()
+            .and_then(|i| self.filtered_items().get(i))
+            .copied()
+    }
+}
 ```
 
 ---
 
-## Pattern: Model-State Split
+## Bounds Checking
 
-Keep application data in immutable Model, widget state in mutable State:
+Navigation methods handle bounds automatically:
 
-```ruby
-Model = Data.define(:items, :filter)
+```rust
+// select_next() won't go past last item
+// select_previous() won't go before first item
+self.list_state.select_next();
+```
 
-class App
-  def initialize
-    @model = Model.new(items: fetch_items, filter: "")
-    @list_state = ListState.new
-  end
+For manual bounds checking:
 
-  def update(msg)
-    case msg
-    in :next
-      @list_state.select_next
-    in :filter, value
-      @model = @model.with(filter: value, items: filter_items(value))
-      @list_state.select_first  # Reset selection on filter
-    end
-  end
+```rust
+fn next(&mut self) {
+    let i = match self.list_state.selected() {
+        Some(i) if i < self.items.len() - 1 => i + 1,
+        _ => 0,
+    };
+    self.list_state.select(Some(i));
+}
 
-  def view(tui, frame)
-    list = tui.list(items: @model.items)
-    frame.render_stateful_widget(list, frame.area, @list_state)
-  end
-end
+fn previous(&mut self) {
+    let i = match self.list_state.selected() {
+        Some(0) | None => self.items.len() - 1,
+        Some(i) => i - 1,
+    };
+    self.list_state.select(Some(i));
+}
+```
+
+---
+
+## Multiple Stateful Widgets
+
+```rust
+struct App {
+    active_pane: Pane,
+    file_list_state: ListState,
+    preview_scroll: u16,
+    tab_state: usize,
+}
+
+enum Pane {
+    FileList,
+    Preview,
+}
+
+impl App {
+    fn handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Tab => self.toggle_pane(),
+            KeyCode::Down => match self.active_pane {
+                Pane::FileList => self.file_list_state.select_next(),
+                Pane::Preview => self.preview_scroll += 1,
+            },
+            _ => {}
+        }
+    }
+}
 ```

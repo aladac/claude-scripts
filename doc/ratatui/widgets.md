@@ -1,15 +1,15 @@
-# RatatuiRuby Widgets
+# Ratatui Widgets
 
-All widgets are immutable `Data.define` objects. Create them with keyword arguments.
+All widgets implement the `Widget` trait. Create them with builder patterns.
 
 ## Widget Categories
 
 | Category | Widgets |
 |----------|---------|
-| **Text** | Paragraph, Cursor |
+| **Text** | Paragraph, Line, Span, Text |
 | **Data** | List, Table, Sparkline, BarChart, Chart, Calendar |
-| **Layout** | Block, Tabs, Scrollbar, Center, Overlay, Clear |
-| **Input** | Gauge, LineGauge |
+| **Layout** | Block, Tabs, Scrollbar, Clear |
+| **Progress** | Gauge, LineGauge |
 | **Canvas** | Canvas (shapes, custom drawing) |
 
 ---
@@ -18,26 +18,42 @@ All widgets are immutable `Data.define` objects. Create them with keyword argume
 
 Display text with alignment, wrapping, and scrolling.
 
-```ruby
-Paragraph.new(
-  text: "Hello, World!",
-  style: Style.new(fg: :green),
-  alignment: :center,        # :left, :center, :right
-  wrap: true,                # wrap at container edge
-  scroll: [0, 0],            # [y, x] offset
-  block: Block.new(title: "Output", borders: [:all])
-)
+```rust
+use ratatui::widgets::{Paragraph, Block, Wrap};
+use ratatui::style::{Style, Color};
+use ratatui::layout::Alignment;
+
+Paragraph::new("Hello, World!")
+    .style(Style::new().fg(Color::Green))
+    .alignment(Alignment::Center)
+    .wrap(Wrap { trim: true })
+    .scroll((0, 0))  // (y, x) offset
+    .block(Block::bordered().title("Output"))
 ```
 
 ### Rich Text
 
-```ruby
-Paragraph.new(
-  text: Text::Line.new(spans: [
-    Text::Span.new(content: "Error: ", style: Style.new(fg: :red, modifiers: [:bold])),
-    Text::Span.new(content: "File not found")
-  ])
-)
+```rust
+use ratatui::text::{Line, Span};
+
+let line = Line::from(vec![
+    Span::styled("Error: ", Style::new().fg(Color::Red).bold()),
+    Span::raw("File not found"),
+]);
+Paragraph::new(line)
+```
+
+### Multi-line
+
+```rust
+use ratatui::text::Text;
+
+let text = Text::from(vec![
+    Line::from("Line 1"),
+    Line::from("Line 2"),
+    Line::styled("Line 3", Style::new().italic()),
+]);
+Paragraph::new(text)
 ```
 
 ---
@@ -46,28 +62,42 @@ Paragraph.new(
 
 Selectable list with navigation and scrolling.
 
-```ruby
-List.new(
-  items: ["Item 1", "Item 2", "Item 3"],
-  selected_index: 0,
-  highlight_style: Style.new(bg: :blue),
-  highlight_symbol: ">> ",
-  highlight_spacing: :when_selected,  # :always, :when_selected, :never
-  direction: :top_to_bottom,          # or :bottom_to_top
-  scroll_padding: 2,
-  block: Block.new(title: "Menu", borders: [:all])
-)
+```rust
+use ratatui::widgets::{List, ListItem, ListState, Block};
+use ratatui::style::{Style, Modifier};
+
+let items = vec![
+    ListItem::new("Item 1"),
+    ListItem::new("Item 2"),
+    ListItem::new("Item 3"),
+];
+
+let list = List::new(items)
+    .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+    .highlight_symbol(">> ")
+    .highlight_spacing(HighlightSpacing::Always)
+    .direction(ListDirection::TopToBottom)
+    .block(Block::bordered().title("Menu"));
+
+// Render with state
+let mut state = ListState::default().with_selected(Some(0));
+frame.render_stateful_widget(list, area, &mut state);
+
+// Navigation
+state.select_next();
+state.select_previous();
+state.select_first();
+state.select_last();
 ```
 
-### List with Styled Items
+### Styled Items
 
-```ruby
-items = [
-  ListItem.new(content: "Active", style: Style.new(fg: :green)),
-  ListItem.new(content: "Pending", style: Style.new(fg: :yellow)),
-  ListItem.new(content: "Error", style: Style.new(fg: :red))
-]
-List.new(items: items)
+```rust
+let items = vec![
+    ListItem::new("Active").style(Style::new().fg(Color::Green)),
+    ListItem::new("Pending").style(Style::new().fg(Color::Yellow)),
+    ListItem::new("Error").style(Style::new().fg(Color::Red)),
+];
 ```
 
 ---
@@ -76,35 +106,45 @@ List.new(items: items)
 
 Structured data in rows and columns.
 
-```ruby
-Table.new(
-  header: ["Name", "Status", "Port"],
-  rows: [
-    ["api", "running", "8080"],
-    ["worker", "stopped", "-"]
-  ],
-  widths: [
-    Constraint.percentage(40),
-    Constraint.percentage(30),
-    Constraint.percentage(30)
-  ],
-  selected_row: 0,
-  row_highlight_style: Style.new(modifiers: [:reversed]),
-  highlight_symbol: "> ",
-  column_spacing: 1,
-  block: Block.new(title: "Services", borders: [:all])
-)
+```rust
+use ratatui::widgets::{Table, Row, Cell, TableState, Block};
+use ratatui::layout::Constraint;
+
+let header = Row::new(vec!["Name", "Status", "Port"])
+    .style(Style::new().bold())
+    .bottom_margin(1);
+
+let rows = vec![
+    Row::new(vec!["api", "running", "8080"]),
+    Row::new(vec!["worker", "stopped", "-"]),
+];
+
+let widths = [
+    Constraint::Percentage(40),
+    Constraint::Percentage(30),
+    Constraint::Percentage(30),
+];
+
+let table = Table::new(rows, widths)
+    .header(header)
+    .row_highlight_style(Style::new().reversed())
+    .highlight_symbol("> ")
+    .column_spacing(1)
+    .block(Block::bordered().title("Services"));
+
+// Render with state
+let mut state = TableState::default().with_selected(Some(0));
+frame.render_stateful_widget(table, area, &mut state);
 ```
 
-### Width Shortcuts
+### Styled Cells
 
-```ruby
-# Integers auto-coerce to Constraint.length
-Table.new(widths: [20, 15, 10])
-
-# Batch creation
-Constraint.from_percentages([40, 30, 30])
-Constraint.from_lengths([20, 15, 10])
+```rust
+let row = Row::new(vec![
+    Cell::from("api"),
+    Cell::from("running").style(Style::new().fg(Color::Green)),
+    Cell::from("8080"),
+]);
 ```
 
 ---
@@ -113,15 +153,27 @@ Constraint.from_lengths([20, 15, 10])
 
 Container with borders and title.
 
-```ruby
-Block.new(
-  title: "Dashboard",
-  borders: [:all],              # [:top, :bottom, :left, :right] or [:all]
-  border_style: Style.new(fg: :cyan),
-  border_type: :rounded,        # :plain, :rounded, :double, :thick
-  title_position: :top,         # :top, :bottom
-  title_alignment: :center      # :left, :center, :right
-)
+```rust
+use ratatui::widgets::{Block, Borders, BorderType};
+
+Block::new()
+    .title("Dashboard")
+    .borders(Borders::ALL)
+    .border_style(Style::new().fg(Color::Cyan))
+    .border_type(BorderType::Rounded)
+    .title_alignment(Alignment::Center)
+
+// Shorthand
+Block::bordered().title("Title")
+```
+
+### Border Types
+
+```rust
+BorderType::Plain    // ─│┌┐└┘
+BorderType::Rounded  // ─│╭╮╰╯
+BorderType::Double   // ═║╔╗╚╝
+BorderType::Thick    // ━┃┏┓┗┛
 ```
 
 ---
@@ -130,14 +182,14 @@ Block.new(
 
 Progress indicator.
 
-```ruby
-Gauge.new(
-  ratio: 0.75,                  # 0.0 to 1.0
-  label: "75%",
-  style: Style.new(fg: :green),
-  gauge_style: Style.new(bg: :green),
-  block: Block.new(title: "Progress", borders: [:all])
-)
+```rust
+use ratatui::widgets::{Gauge, Block};
+
+Gauge::default()
+    .ratio(0.75)  // 0.0 to 1.0
+    .label("75%")
+    .gauge_style(Style::new().fg(Color::Green))
+    .block(Block::bordered().title("Progress"))
 ```
 
 ---
@@ -146,14 +198,16 @@ Gauge.new(
 
 Horizontal line progress.
 
-```ruby
-LineGauge.new(
-  ratio: 0.5,
-  label: "Loading...",
-  line_set: :thick,             # :normal, :thick, :double
-  filled_style: Style.new(fg: :blue),
-  unfilled_style: Style.new(fg: :dark_gray)
-)
+```rust
+use ratatui::widgets::LineGauge;
+use ratatui::symbols::line;
+
+LineGauge::default()
+    .ratio(0.5)
+    .label("Loading...")
+    .line_set(line::THICK)
+    .filled_style(Style::new().fg(Color::Blue))
+    .unfilled_style(Style::new().fg(Color::DarkGray))
 ```
 
 ---
@@ -162,35 +216,39 @@ LineGauge.new(
 
 Mini chart for data series.
 
-```ruby
-Sparkline.new(
-  data: [1, 4, 2, 8, 5, 7, 3],
-  style: Style.new(fg: :cyan),
-  direction: :left_to_right,    # or :right_to_left
-  block: Block.new(borders: [:all])
-)
+```rust
+use ratatui::widgets::{Sparkline, Block};
+
+Sparkline::default()
+    .data(&[1, 4, 2, 8, 5, 7, 3])
+    .style(Style::new().fg(Color::Cyan))
+    .direction(RenderDirection::LeftToRight)
+    .block(Block::bordered())
 ```
 
 ---
 
 ## BarChart
 
-Vertical bar chart.
+Vertical/horizontal bar chart.
 
-```ruby
-BarChart.new(
-  data: [
-    Bar.new(value: 10, label: "Mon"),
-    Bar.new(value: 20, label: "Tue"),
-    Bar.new(value: 15, label: "Wed")
-  ],
-  bar_width: 5,
-  bar_gap: 1,
-  bar_style: Style.new(fg: :blue),
-  value_style: Style.new(fg: :white),
-  label_style: Style.new(fg: :cyan),
-  direction: :vertical          # or :horizontal
-)
+```rust
+use ratatui::widgets::{BarChart, Bar, BarGroup, Block};
+
+let data = BarGroup::default().bars(&[
+    Bar::default().value(10).label("Mon".into()),
+    Bar::default().value(20).label("Tue".into()),
+    Bar::default().value(15).label("Wed".into()),
+]);
+
+BarChart::default()
+    .data(data)
+    .bar_width(5)
+    .bar_gap(1)
+    .bar_style(Style::new().fg(Color::Blue))
+    .value_style(Style::new().fg(Color::White))
+    .label_style(Style::new().fg(Color::Cyan))
+    .direction(Direction::Vertical)
 ```
 
 ---
@@ -199,15 +257,15 @@ BarChart.new(
 
 Tab bar.
 
-```ruby
-Tabs.new(
-  titles: ["Home", "Settings", "Help"],
-  selected: 0,
-  style: Style.new(fg: :white),
-  highlight_style: Style.new(fg: :yellow, modifiers: [:bold]),
-  divider: " | ",
-  block: Block.new(borders: [:bottom])
-)
+```rust
+use ratatui::widgets::{Tabs, Block};
+
+Tabs::new(vec!["Home", "Settings", "Help"])
+    .select(0)
+    .style(Style::new().fg(Color::White))
+    .highlight_style(Style::new().fg(Color::Yellow).bold())
+    .divider(" | ")
+    .block(Block::default().borders(Borders::BOTTOM))
 ```
 
 ---
@@ -216,17 +274,18 @@ Tabs.new(
 
 Scroll indicator.
 
-```ruby
-Scrollbar.new(
-  orientation: :vertical,       # or :horizontal
-  thumb_style: Style.new(fg: :cyan),
-  track_style: Style.new(fg: :dark_gray),
-  begin_symbol: "▲",
-  end_symbol: "▼"
-)
-```
+```rust
+use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-Use with `ScrollbarState` for stateful rendering.
+let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+    .thumb_style(Style::new().fg(Color::Cyan))
+    .track_style(Style::new().fg(Color::DarkGray))
+    .begin_symbol(Some("▲"))
+    .end_symbol(Some("▼"));
+
+let mut state = ScrollbarState::new(100).position(25);
+frame.render_stateful_widget(scrollbar, area, &mut state);
+```
 
 ---
 
@@ -234,42 +293,35 @@ Use with `ScrollbarState` for stateful rendering.
 
 Low-level drawing surface for shapes.
 
-```ruby
-Canvas.new(
-  x_bounds: [0.0, 100.0],
-  y_bounds: [0.0, 100.0],
-  marker: :braille,             # :braille, :dot, :block, :bar, :half_block
-  paint: ->(ctx) {
-    ctx.draw(Line.new(x1: 0, y1: 0, x2: 100, y2: 100, color: :red))
-    ctx.draw(Circle.new(x: 50, y: 50, radius: 20, color: :blue))
-  }
-)
+```rust
+use ratatui::widgets::canvas::{Canvas, Line, Circle, Rectangle};
+
+Canvas::default()
+    .x_bounds([0.0, 100.0])
+    .y_bounds([0.0, 100.0])
+    .marker(Marker::Braille)
+    .paint(|ctx| {
+        ctx.draw(&Line {
+            x1: 0.0, y1: 0.0,
+            x2: 100.0, y2: 100.0,
+            color: Color::Red,
+        });
+        ctx.draw(&Circle {
+            x: 50.0, y: 50.0,
+            radius: 20.0,
+            color: Color::Blue,
+        });
+    })
 ```
 
----
+### Markers
 
-## Center
-
-Center content in area.
-
-```ruby
-Center.new(
-  child: Paragraph.new(text: "Centered!")
-)
-```
-
----
-
-## Overlay
-
-Layer widget on top of another.
-
-```ruby
-Overlay.new(
-  base: base_widget,
-  overlay: popup_widget,
-  position: [10, 5]             # [x, y]
-)
+```rust
+Marker::Dot       // ·
+Marker::Block     // █
+Marker::Bar       // ▄
+Marker::Braille   // ⠿ (high resolution)
+Marker::HalfBlock // ▀▄
 ```
 
 ---
@@ -278,29 +330,55 @@ Overlay.new(
 
 Clear area (fill with spaces).
 
-```ruby
-Clear.new
+```rust
+use ratatui::widgets::Clear;
+
+frame.render_widget(Clear, popup_area);
+frame.render_widget(popup_widget, popup_area);
 ```
 
 ---
 
 ## Style Reference
 
-```ruby
-Style.new(
-  fg: :red,                     # Symbol, "#hex", or Integer (0-255)
-  bg: :black,
-  underline_color: :yellow,
-  modifiers: [:bold, :italic, :underlined, :reversed, :dim, :crossed_out]
-)
+```rust
+use ratatui::style::{Color, Modifier, Style, Stylize};
 
-# Named colors
-:black, :red, :green, :yellow, :blue, :magenta, :cyan, :gray, :white
-:dark_gray, :light_red, :light_green, :light_yellow, :light_blue, :light_magenta, :light_cyan
+// Builder pattern
+Style::new()
+    .fg(Color::Red)
+    .bg(Color::Black)
+    .add_modifier(Modifier::BOLD | Modifier::ITALIC);
 
-# Hex colors (24-bit)
-"#ff5500", "#a0b0c0"
+// Stylize trait (fluent)
+"text".red().bold().on_black()
 
-# 256-color palette
-42, 196, 232
+// Named colors
+Color::Black, Color::Red, Color::Green, Color::Yellow,
+Color::Blue, Color::Magenta, Color::Cyan, Color::Gray, Color::White,
+Color::DarkGray, Color::LightRed, Color::LightGreen, Color::LightYellow,
+Color::LightBlue, Color::LightMagenta, Color::LightCyan
+
+// RGB
+Color::Rgb(255, 100, 0)
+
+// 256-color palette
+Color::Indexed(42)
+
+// Reset
+Color::Reset
+```
+
+### Modifiers
+
+```rust
+Modifier::BOLD
+Modifier::DIM
+Modifier::ITALIC
+Modifier::UNDERLINED
+Modifier::SLOW_BLINK
+Modifier::RAPID_BLINK
+Modifier::REVERSED
+Modifier::HIDDEN
+Modifier::CROSSED_OUT
 ```
