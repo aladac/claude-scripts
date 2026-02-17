@@ -61,7 +61,11 @@ module ClaudeScripts
         nil
       end
 
+      ACRONYMS = %w[ai sd api ui cf ps].freeze
+
       def camelize(str)
+        return str.upcase if ACRONYMS.include?(str.downcase)
+
         str.split(/[_-]/).map(&:capitalize).join
       end
 
