@@ -31,13 +31,25 @@ module ClaudeScripts
       private
 
       def parse_args(args)
-        # Find where command path ends and args begin
-        # e.g., ["git", "status", "--verbose"] -> [["git", "status"], ["--verbose"]]
-        path = []
+        # Find the longest command path that resolves to a valid command
+        # e.g., ["commands", "add", "test", "foo"] -> [["commands", "add"], ["test", "foo"]]
         remaining = args.dup
+        path = []
 
+        # Try progressively longer paths until we can't find a matching file
         while remaining.any? && !remaining.first.start_with?("-")
-          path << remaining.shift
+          candidate = path + [remaining.first]
+          file_path = File.join(COMMANDS_PATH, *candidate) + ".rb"
+
+          if File.exist?(file_path)
+            path << remaining.shift
+          elsif File.directory?(File.join(COMMANDS_PATH, *candidate))
+            # It's a directory, keep going
+            path << remaining.shift
+          else
+            # No file and not a directory, stop here
+            break
+          end
         end
 
         [path, remaining]
