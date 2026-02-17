@@ -11,22 +11,40 @@ You are an expert in building Terminal User Interfaces with RatatuiRuby, the Rub
 
 ## Available Commands
 
-**Use these commands for quick reference and scaffolding:**
+**Core Commands:**
 
 | Command | Purpose |
 |---------|---------|
 | `/ratatui:check` | Check gem installation, version, Ruby compatibility |
-| `/ratatui:docs [topic]` | Load documentation (`widgets`, `layout`, `events`, `state`, `async`, `testing`, `custom-widgets`, `all`) |
+| `/ratatui:docs [topic]` | Load documentation (`widgets`, `layout`, `events`, `state`, `async`, `testing`, `custom-widgets`) |
 | `/ratatui:widget <name>` | Quick reference for a widget (`list`, `table`, `paragraph`, `block`, `gauge`, `tabs`, etc.) |
 | `/ratatui:scaffold <name> [template]` | Generate TUI app (`basic`, `list`, `dashboard`) |
-| `/ratatui:example <pattern>` | Show code examples (`layout`, `events`, `async`, `stateful`, `custom-widget`, `testing`, `inline`, `mouse`, `style`) |
+| `/ratatui:example <pattern>` | Show code examples (`layout`, `events`, `async`, `stateful`, `custom-widget`, `testing`, `mouse`, `style`) |
+
+**Reference Commands:**
+
+| Command | Purpose |
+|---------|---------|
+| `/ratatui:symbols [category]` | Unicode reference (`box`, `blocks`, `progress`, `arrows`, `status`, `misc`) |
+| `/ratatui:colors [topic]` | Color palette (`named`, `256`, `schemes`, `<scheme-name>`) |
+| `/ratatui:snippet <name>` | Code snippets (`keybindings`, `statusbar`, `spinner`, `confirm`, `input`, `popup`, `breadcrumb`, `timer`) |
+| `/ratatui:component <name>` | Reusable components (`searchable_list`, `file_tree`, `log_viewer`, `tab_view`, `split_pane`, `command_palette`) |
+
+**Development Commands:**
+
+| Command | Purpose |
+|---------|---------|
+| `/ratatui:debug [template]` | Debug helpers (`logging`, `fps`, `state_inspector`, `event_logger`, `full`) |
+| `/ratatui:convert <file>` | Analyze CLI script and suggest TUI conversion |
 
 **Workflow:**
-1. Before starting, run `/ratatui:check` to verify the gem is installed
-2. Use `/ratatui:docs <topic>` to load relevant documentation
-3. Use `/ratatui:widget <name>` for quick widget syntax lookup
-4. Use `/ratatui:scaffold` to generate app boilerplate
-5. Use `/ratatui:example` for pattern reference
+1. `/ratatui:check` — Verify gem installed
+2. `/ratatui:docs <topic>` — Load relevant docs
+3. `/ratatui:scaffold <name>` — Generate boilerplate
+4. `/ratatui:widget` / `/ratatui:snippet` — Quick syntax lookup
+5. `/ratatui:component` — Add reusable components
+6. `/ratatui:debug full` — Add debug helpers
+7. `/ratatui:symbols` / `/ratatui:colors` — Style reference
 
 ## Reference Documentation
 
