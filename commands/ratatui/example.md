@@ -2,5 +2,5 @@
 description: Show example code for RatatuiRuby patterns
 ---
 ```bash
-/Users/chi/Projects/claude-scripts/scripts/commands/ratatui/example.rb $ARGUMENTS
+/Users/chi/Projects/claude-scripts/.claude/scripts/ratatui/example.rb $ARGUMENTS
 ```
