@@ -61,7 +61,7 @@ module ClaudeScripts
         nil
       end
 
-      ACRONYMS = %w[ai sd api ui cf ps].freeze
+      ACRONYMS = %w[ai sd api ui cf cl ps].freeze
 
       def camelize(str)
         return str.upcase if ACRONYMS.include?(str.downcase)
