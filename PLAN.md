@@ -244,7 +244,7 @@ Prompt: daily-workflow
 
 ## Phases
 
-### Phase 1: Foundation (2-3 weeks)
+### Phase 1: Foundation (3-5 days)
 **Goal:** Rename, restructure, basic MCP infrastructure
 
 - [ ] Rename hu → jikko (Cargo.toml, binary, all references)
@@ -258,7 +258,7 @@ Prompt: daily-workflow
 
 **Deliverable:** `jikko mcp context` works as Claude MCP server
 
-### Phase 2: MCP Servers (2-3 weeks)
+### Phase 2: MCP Servers (5-7 days)
 **Goal:** Full MCP coverage for existing modules
 
 - [ ] MCP server trait and registry
@@ -272,7 +272,7 @@ Prompt: daily-workflow
 
 **Deliverable:** 6+ MCP servers working with Claude
 
-### Phase 3: Install & Hooks (1-2 weeks)
+### Phase 3: Install & Hooks (2-3 days)
 **Goal:** Full ecosystem management
 
 - [ ] `jikko install run` - Full installation wizard
@@ -286,7 +286,7 @@ Prompt: daily-workflow
 
 **Deliverable:** `jikko install run` sets up complete Claude Code integration
 
-### Phase 4: Port jikko Commands (2-3 weeks)
+### Phase 4: Port jikko Commands (3-5 days)
 **Goal:** All Ruby jikko functionality in Rust
 
 - [ ] docker module (ps, images) + MCP server
@@ -300,7 +300,7 @@ Prompt: daily-workflow
 
 **Deliverable:** All jikko commands + MCP equivalents
 
-### Phase 5: TUI Components (2-3 weeks)
+### Phase 5: TUI Components (3-5 days)
 **Goal:** Reusable Ratatui widget library
 
 - [ ] `TableWidget` - Sortable, scrollable, selectable
@@ -314,7 +314,7 @@ Prompt: daily-workflow
 
 **Deliverable:** Widget library ready for views
 
-### Phase 6: TUI Views (3-4 weeks)
+### Phase 6: TUI Views (5-7 days)
 **Goal:** Interactive TUI for key workflows
 
 - [ ] Dashboard: Module list, stats, quick actions
@@ -327,7 +327,7 @@ Prompt: daily-workflow
 
 **Deliverable:** Full TUI experience
 
-### Phase 7: Polish (1-2 weeks)
+### Phase 7: Polish (2-3 days)
 **Goal:** Production release
 
 - [ ] Shell completions (bash, zsh, fish)
@@ -340,7 +340,7 @@ Prompt: daily-workflow
 
 **Deliverable:** v1.0.0 release
 
-### Phase 8: Claude Code Plugin Package (1 week)
+### Phase 8: Claude Code Plugin Package (1-2 days)
 **Goal:** Package jikko as distributable Claude Code plugin
 
 > **Reference:** Validated against `plugin-dev:plugin-structure`, `plugin-dev:mcp-integration`, `plugin-dev:hook-development` skills
@@ -462,18 +462,19 @@ claude plugin install jikko
 
 ## Effort Estimate
 
+*Adjusted for Claude-assisted development velocity*
+
 | Phase | Duration | Complexity |
 |-------|----------|------------|
-| 1. Foundation | 2-3 weeks | High |
-| 2. MCP Servers (Core) | 2-3 weeks | High |
-| 2b. MCP Servers (Memory/Index) | 2-3 weeks | High |
-| 3. Install & Hooks | 1-2 weeks | Medium |
-| 4. Port Commands | 2-3 weeks | Medium |
-| 5. TUI Components | 2-3 weeks | High |
-| 6. TUI Views | 3-4 weeks | High |
-| 7. Polish | 1-2 weeks | Low |
-| 8. Plugin Package | 1 week | Medium |
-| **Total** | **16-24 weeks** | |
+| 1. Foundation | 3-5 days | High |
+| 2. MCP Servers (all 13) | 5-7 days | High |
+| 3. Install & Hooks | 2-3 days | Medium |
+| 4. Port Commands | 3-5 days | Medium |
+| 5. TUI Components | 3-5 days | High |
+| 6. TUI Views | 5-7 days | High |
+| 7. Polish | 2-3 days | Low |
+| 8. Plugin Package | 1-2 days | Medium |
+| **Total** | **24-37 days (~5-6 weeks)** | |
 
 **Note:** Memory/Indexer servers require:
 - PostgreSQL with pgvector extension (HNSW index)

@@ -148,3 +148,31 @@ Prefer tables for structured data. Use `ok`/`err`/`info` for status messages.
 
 - Ruby >= 3.1
 - `cli-ui` gem (Shopify's terminal UI library)
+
+## Plugin Development
+
+When developing Claude Code plugin features (hooks, MCP servers, commands), use the `plugin-dev` plugin skills:
+
+| Skill | Use For |
+|-------|---------|
+| `plugin-dev:plugin-structure` | Plugin layout, `plugin.json` manifest, component organization |
+| `plugin-dev:mcp-integration` | MCP server configuration (stdio, SSE, HTTP), `.mcp.json` format |
+| `plugin-dev:hook-development` | Hooks format, event types, prompt vs command hooks |
+| `plugin-dev:command-development` | Slash command structure, frontmatter, arguments |
+| `plugin-dev:skill-development` | Skill structure, `SKILL.md` format |
+| `plugin-dev:agent-development` | Agent definitions, frontmatter |
+
+**Key rules from plugin-dev:**
+- Plugin hooks use wrapper format: `{"description": "...", "hooks": {...}}`
+- Settings hooks use direct format: `{"PreToolUse": [...]}`
+- Use `${CLAUDE_PLUGIN_ROOT}` for portable paths in plugins
+- MCP servers: stdio for local binaries, SSE for hosted services
+
+## Future: Rust Version
+
+See `PLAN.md` and `TODO.md` for the Rust rewrite plan merging `hu` + `jikko` into a single binary with:
+- CLI (clap) + TUI (ratatui) + MCP servers (stdio)
+- 13 MCP servers (context, memory, indexer, knowledge, link, jira, gh, docker, cf, slack, git, read, data)
+- PostgreSQL + pgvector for vector storage
+- tree-sitter for AST-aware code indexing
+- Plugin distribution via `saiden-dev/claude-plugins` marketplace
